@@ -37,3 +37,22 @@ export async function createPublicOrder(req, res) {
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }
 }
+
+export async function createCheckout(req, res) {
+  try {
+    const result = await storeService.createCheckout(req.params.slug, req.body);
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getDiscounts(req, res) {
+  try {
+    return res.json(await storeService.getDiscounts(req.seller.id));
+  } catch (err) { handleError(res, err); }
+}
+
+export async function updateDiscounts(req, res) {
+  try {
+    return res.json(await storeService.updateDiscounts(req.seller.id, req.body));
+  } catch (err) { handleError(res, err); }
+}

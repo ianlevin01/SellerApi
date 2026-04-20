@@ -3,7 +3,6 @@ import pool from "../database/db.js";
 import crypto from "crypto";
 
 export async function findOrCreateConversation(sellerId, { customer_name, customer_email, customer_phone }) {
-  // If customer has email, try to find existing conversation
   if (customer_email) {
     const { rows: existing } = await pool.query(
       `SELECT id, access_token FROM conversations
@@ -43,7 +42,7 @@ export async function getConversationById(conversationId, sellerId) {
 
 export async function getMessages(conversationId) {
   const { rows } = await pool.query(
-    `SELECT id, sender, body, created_at, read_at
+    `SELECT id, sender, body, msg_type, quote_data, created_at, read_at
      FROM messages WHERE conversation_id = $1
      ORDER BY created_at ASC`,
     [conversationId]
@@ -51,12 +50,52 @@ export async function getMessages(conversationId) {
   return rows;
 }
 
+export async function getMessageById(messageId) {
+  const { rows } = await pool.query(
+    `SELECT id, conversation_id, sender, body, msg_type, quote_data
+     FROM messages WHERE id = $1`,
+    [messageId]
+  );
+  return rows[0] || null;
+}
+
 export async function insertMessage(conversationId, sender, body) {
   const { rows } = await pool.query(
     `INSERT INTO messages (conversation_id, sender, body)
      VALUES ($1, $2, $3)
-     RETURNING id, sender, body, created_at`,
+     RETURNING id, sender, body, msg_type, quote_data, created_at`,
     [conversationId, sender, body]
+  );
+  await pool.query(
+    `UPDATE conversations SET updated_at = now() WHERE id = $1`,
+    [conversationId]
+  );
+  return rows[0];
+}
+
+export async function insertQuoteMessage(conversationId, quoteData) {
+  const itemCount = quoteData.items?.length ?? 0;
+  const body = `Solicitud de cotización: ${itemCount} producto${itemCount !== 1 ? "s" : ""}`;
+  const { rows } = await pool.query(
+    `INSERT INTO messages (conversation_id, sender, body, msg_type, quote_data)
+     VALUES ($1, 'customer', $2, 'quote_request', $3)
+     RETURNING id, sender, body, msg_type, quote_data, created_at`,
+    [conversationId, body, JSON.stringify(quoteData)]
+  );
+  await pool.query(
+    `UPDATE conversations SET updated_at = now() WHERE id = $1`,
+    [conversationId]
+  );
+  return rows[0];
+}
+
+export async function insertQuoteAcceptedMessage(conversationId, orderNumber) {
+  const body = `¡Cotización aceptada! Tu pedido #${orderNumber} fue registrado. Te contactaremos pronto.`;
+  const { rows } = await pool.query(
+    `INSERT INTO messages (conversation_id, sender, body, msg_type, quote_data)
+     VALUES ($1, 'seller', $2, 'quote_accepted', $3)
+     RETURNING id, sender, body, msg_type, quote_data, created_at`,
+    [conversationId, body, JSON.stringify({ order_number: orderNumber })]
   );
   await pool.query(
     `UPDATE conversations SET updated_at = now() WHERE id = $1`,

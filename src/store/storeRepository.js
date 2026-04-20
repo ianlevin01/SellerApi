@@ -17,17 +17,24 @@ export async function getConfig(sellerId) {
   return rows[0] || null;
 }
 
-export async function updateConfig(sellerId, { store_name, store_description, banner_color, pct_markup }) {
+export async function updateConfig(sellerId, { store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook }) {
+  // Empty string → null (clears the field); undefined → null (keeps DB behaviour via COALESCE for core fields)
+  const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
-     SET store_name        = COALESCE($1, store_name),
-         store_description = COALESCE($2, store_description),
-         banner_color      = COALESCE($3, banner_color),
-         pct_markup        = COALESCE($4, pct_markup),
+     SET store_name        = COALESCE($1,  store_name),
+         store_description = COALESCE($2,  store_description),
+         banner_color      = COALESCE($3,  banner_color),
+         pct_markup        = COALESCE($4,  pct_markup),
+         tagline           = $6,
+         whatsapp          = $7,
+         instagram         = $8,
+         facebook          = $9,
          updated_at        = now()
      WHERE seller_id = $5
      RETURNING *`,
-    [store_name, store_description, banner_color, pct_markup, sellerId]
+    [store_name, store_description, banner_color, pct_markup, sellerId,
+     e(tagline), e(whatsapp), e(instagram), e(facebook)]
   );
   return rows[0];
 }
@@ -127,6 +134,52 @@ export async function createOrderItems(webOrderId, items) {
       `INSERT INTO web_order_items (web_order_id, product_id, name, quantity, unit_price)
        VALUES ($1, $2, $3, $4, $5)`,
       [webOrderId, item.product_id || null, item.name, item.quantity, item.unit_price]
+    );
+  }
+}
+
+// ── Descuentos progresivos ────────────────────────────────────
+
+export async function getDiscountConfig(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM seller_discounts WHERE seller_id = $1`,
+    [sellerId]
+  );
+  return rows[0] || null;
+}
+
+export async function upsertDiscountConfig(sellerId, { enabled, discount_type, min_profit_pct }) {
+  const { rows } = await pool.query(
+    `INSERT INTO seller_discounts (seller_id, enabled, discount_type, min_profit_pct)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (seller_id) DO UPDATE
+       SET enabled        = EXCLUDED.enabled,
+           discount_type  = EXCLUDED.discount_type,
+           min_profit_pct = EXCLUDED.min_profit_pct,
+           updated_at     = now()
+     RETURNING *`,
+    [sellerId, enabled, discount_type, min_profit_pct]
+  );
+  return rows[0];
+}
+
+export async function getDiscountTiers(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT id, threshold, discount_pct
+     FROM seller_discount_tiers
+     WHERE seller_id = $1
+     ORDER BY threshold ASC`,
+    [sellerId]
+  );
+  return rows;
+}
+
+export async function replaceDiscountTiers(sellerId, tiers) {
+  await pool.query(`DELETE FROM seller_discount_tiers WHERE seller_id = $1`, [sellerId]);
+  for (const t of tiers) {
+    await pool.query(
+      `INSERT INTO seller_discount_tiers (seller_id, threshold, discount_pct) VALUES ($1, $2, $3)`,
+      [sellerId, t.threshold, t.discount_pct]
     );
   }
 }

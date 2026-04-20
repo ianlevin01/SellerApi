@@ -34,6 +34,15 @@ export async function sendPublicMessage(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+export async function sendQuoteRequest(req, res) {
+  try {
+    const { slug, conversationId } = req.params;
+    const token = req.query.token;
+    const result = await chatService.sendQuoteRequest(slug, Number(conversationId), token, req.body);
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
+
 // ── Protegido (vendedor) ──────────────────────────────────────
 
 export async function getConversations(req, res) {
@@ -53,6 +62,14 @@ export async function getSellerMessages(req, res) {
 export async function sendSellerMessage(req, res) {
   try {
     const result = await chatService.sendSellerMessage(req.seller.id, Number(req.params.conversationId), req.body.body);
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function acceptQuote(req, res) {
+  try {
+    const { conversationId, messageId } = req.params;
+    const result = await chatService.acceptQuote(req.seller.id, Number(conversationId), Number(messageId));
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }
 }

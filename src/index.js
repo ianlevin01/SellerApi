@@ -8,6 +8,7 @@ import productsRoutes from "./products/productsRoutes.js";
 import storeRoutes    from "./store/storeRoutes.js";
 import imagesRoutes   from "./images/imagesRoutes.js";
 import { publicRouter as chatPublicRouter, sellerRouter as chatSellerRouter } from "./chat/chatRoutes.js";
+import { runMigrations } from "./database/runMigrations.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -24,4 +25,11 @@ app.use("/store/:slug/chat", chatPublicRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
+  })
+  .catch(err => {
+    console.error("Error al ejecutar migraciones:", err);
+    process.exit(1);
+  });
