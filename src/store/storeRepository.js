@@ -7,36 +7,93 @@ export async function getCotizacion() {
   return Number(rows[0]?.cotizacion_dolar || 1);
 }
 
-// ── Config ────────────────────────────────────────────────────
+// ── Pages ─────────────────────────────────────────────────────
 
-export async function getConfig(sellerId) {
+export async function getPages(sellerId) {
   const { rows } = await pool.query(
-    `SELECT * FROM seller_pages WHERE seller_id = $1`,
+    `SELECT id, slug, page_name, store_name, store_description, banner_color,
+            pct_markup, tagline, whatsapp, instagram, facebook, active, updated_at
+     FROM seller_pages WHERE seller_id = $1 ORDER BY id ASC`,
     [sellerId]
+  );
+  return rows;
+}
+
+export async function getPageById(pageId, sellerId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM seller_pages WHERE id = $1 AND seller_id = $2`,
+    [pageId, sellerId]
   );
   return rows[0] || null;
 }
 
-export async function updateConfig(sellerId, { store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook }) {
-  // Empty string → null (clears the field); undefined → null (keeps DB behaviour via COALESCE for core fields)
+export async function createPage(sellerId, { page_name, slug, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary }) {
+  const e = v => (v === "" ? null : (v ?? null));
+  const { rows } = await pool.query(
+    `INSERT INTO seller_pages
+       (seller_id, page_name, slug, store_name, store_description, banner_color, pct_markup,
+        tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)
+     RETURNING *`,
+    [sellerId, page_name || store_name, slug, store_name, store_description,
+     banner_color || "#5b52f0", pct_markup ?? 0,
+     e(tagline), e(whatsapp), e(instagram), e(facebook),
+     e(logo_url), e(font_family), e(color_secondary)]
+  );
+  return rows[0];
+}
+
+export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
-     SET store_name        = COALESCE($1,  store_name),
-         store_description = COALESCE($2,  store_description),
-         banner_color      = COALESCE($3,  banner_color),
-         pct_markup        = COALESCE($4,  pct_markup),
-         tagline           = $6,
-         whatsapp          = $7,
-         instagram         = $8,
-         facebook          = $9,
-         updated_at        = now()
-     WHERE seller_id = $5
+     SET page_name           = COALESCE($1,  page_name),
+         store_name          = COALESCE($2,  store_name),
+         store_description   = COALESCE($3,  store_description),
+         banner_color        = COALESCE($4,  banner_color),
+         pct_markup          = COALESCE($5,  pct_markup),
+         tagline             = $8,
+         whatsapp            = $9,
+         instagram           = $10,
+         facebook            = $11,
+         logo_url            = $12,
+         font_family         = $13,
+         color_secondary     = $14,
+         color_bg            = $15,
+         color_text          = $16,
+         featured_categories = $17,
+         updated_at          = now()
+     WHERE id = $6 AND seller_id = $7
      RETURNING *`,
-    [store_name, store_description, banner_color, pct_markup, sellerId,
-     e(tagline), e(whatsapp), e(instagram), e(facebook)]
+    [page_name, store_name, store_description, banner_color, pct_markup,
+     pageId, sellerId,
+     e(tagline), e(whatsapp), e(instagram), e(facebook),
+     e(logo_url), e(font_family), e(color_secondary), e(color_bg), e(color_text),
+     featured_categories ?? null]
   );
   return rows[0];
+}
+
+export async function deletePage(pageId, sellerId) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM seller_pages WHERE id = $1 AND seller_id = $2`,
+    [pageId, sellerId]
+  );
+  return rowCount > 0;
+}
+
+export async function getCategories() {
+  const { rows } = await pool.query(`SELECT id, name FROM categories WHERE active = true ORDER BY name ASC`);
+  return rows;
+}
+
+// Legacy single-page config (used by backward-compat routes)
+export async function getConfig(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM seller_pages WHERE seller_id = $1 ORDER BY id ASC LIMIT 1`,
+    [sellerId]
+  );
+  return rows[0] || null;
 }
 
 // ── Pedidos ───────────────────────────────────────────────────
@@ -63,13 +120,12 @@ export async function getOrders(sellerId) {
   return rows;
 }
 
-export async function getPrecio1ForProduct(productId) {
+export async function getCostUsdForProduct(productId) {
   const { rows } = await pool.query(
-    `SELECT price FROM product_prices
-     WHERE product_id = $1 AND price_type = 'precio_1' LIMIT 1`,
+    `SELECT cost FROM product_costs WHERE product_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [productId]
   );
-  return Number(rows[0]?.price || 0);
+  return Number(rows[0]?.cost || 0);
 }
 
 // ── Tienda pública ────────────────────────────────────────────
@@ -85,15 +141,15 @@ export async function getPageBySlug(slug) {
   return rows[0] || null;
 }
 
-export async function getPublicProducts(sellerId) {
+export async function getPublicProducts(pageId, sellerId) {
   const { rows } = await pool.query(
     `SELECT
-       p.id, p.code, p.name, p.description,
-       (SELECT pp.price FROM product_prices pp
-        WHERE pp.product_id = p.id AND pp.price_type = 'precio_1' LIMIT 1) AS precio_1,
+       p.id, p.code, p.name, p.description, p.category_id,
+       (SELECT pc.cost FROM product_costs pc
+        WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
        COALESCE(
          (SELECT json_agg(si.key ORDER BY si."order")
-          FROM seller_images si WHERE si.seller_id = $1 AND si.product_id = p.id),
+          FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id),
          (SELECT json_agg(pi.key ORDER BY pi.created_at)
           FROM product_images pi WHERE pi.product_id = p.id),
          '[]'
@@ -102,9 +158,9 @@ export async function getPublicProducts(sellerId) {
        spc.custom_desc
      FROM seller_products spc
      JOIN products p ON p.id = spc.product_id
-     WHERE spc.seller_id = $1 AND spc.active = true AND p.active = true
+     WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
      ORDER BY p.name`,
-    [sellerId]
+    [pageId, sellerId]
   );
   return rows;
 }
@@ -138,48 +194,59 @@ export async function createOrderItems(webOrderId, items) {
   }
 }
 
-// ── Descuentos progresivos ────────────────────────────────────
+// ── Descuentos por página ─────────────────────────────────────
 
-export async function getDiscountConfig(sellerId) {
+export async function getDiscountConfigByPage(pageId) {
   const { rows } = await pool.query(
-    `SELECT * FROM seller_discounts WHERE seller_id = $1`,
-    [sellerId]
+    `SELECT * FROM seller_discounts WHERE page_id = $1`,
+    [pageId]
   );
   return rows[0] || null;
 }
 
-export async function upsertDiscountConfig(sellerId, { enabled, discount_type, min_profit_pct }) {
+export async function upsertDiscountConfigByPage(pageId, { enabled_quantity, enabled_price }) {
   const { rows } = await pool.query(
-    `INSERT INTO seller_discounts (seller_id, enabled, discount_type, min_profit_pct)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (seller_id) DO UPDATE
-       SET enabled        = EXCLUDED.enabled,
-           discount_type  = EXCLUDED.discount_type,
-           min_profit_pct = EXCLUDED.min_profit_pct,
-           updated_at     = now()
+    `INSERT INTO seller_discounts (seller_id, enabled, discount_type, min_profit_pct, enabled_quantity, enabled_price, page_id)
+     SELECT seller_id, false, 'quantity', 0, $2, $3, $1 FROM seller_pages WHERE id = $1
+     ON CONFLICT (page_id) DO UPDATE
+       SET enabled_quantity = EXCLUDED.enabled_quantity,
+           enabled_price    = EXCLUDED.enabled_price,
+           updated_at       = now()
      RETURNING *`,
-    [sellerId, enabled, discount_type, min_profit_pct]
+    [pageId, enabled_quantity, enabled_price]
   );
   return rows[0];
 }
 
-export async function getDiscountTiers(sellerId) {
+export async function getAllDiscountTiersByPage(pageId) {
   const { rows } = await pool.query(
-    `SELECT id, threshold, discount_pct
+    `SELECT id, threshold, discount_pct, discount_type
      FROM seller_discount_tiers
-     WHERE seller_id = $1
-     ORDER BY threshold ASC`,
-    [sellerId]
+     WHERE page_id = $1
+     ORDER BY discount_type, threshold ASC`,
+    [pageId]
   );
   return rows;
 }
 
-export async function replaceDiscountTiers(sellerId, tiers) {
-  await pool.query(`DELETE FROM seller_discount_tiers WHERE seller_id = $1`, [sellerId]);
+export async function replaceDiscountTiersByPage(pageId, discountType, tiers) {
+  await pool.query(
+    `DELETE FROM seller_discount_tiers WHERE page_id = $1 AND discount_type = $2`,
+    [pageId, discountType]
+  );
   for (const t of tiers) {
     await pool.query(
-      `INSERT INTO seller_discount_tiers (seller_id, threshold, discount_pct) VALUES ($1, $2, $3)`,
-      [sellerId, t.threshold, t.discount_pct]
+      `INSERT INTO seller_discount_tiers (seller_id, page_id, threshold, discount_pct, discount_type)
+       SELECT seller_id, $1, $2, $3, $4 FROM seller_pages WHERE id = $1`,
+      [pageId, t.threshold, t.discount_pct, discountType]
     );
   }
+}
+
+// Used by getPublicStore (page already known by slug)
+export async function getDiscountConfig(pageId) {
+  return getDiscountConfigByPage(pageId);
+}
+export async function getAllDiscountTiers(pageId) {
+  return getAllDiscountTiersByPage(pageId);
 }

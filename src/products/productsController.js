@@ -10,11 +10,12 @@ function handleError(res, err) {
 export async function getProducts(req, res) {
   try {
     const { search, category_id, only_mine, limit, offset } = req.query;
-    const result = await productsService.getProducts(req.seller.id, {
+    // Legacy route: uses null pageId (no page filter — shows all system products with seller image data)
+    const result = await productsService.getProducts(null, req.seller.id, {
       search,
       categoryId: category_id,
-      onlyMine:   only_mine === "true",
-      limit:      limit  ? Number(limit)  : 20,
+      onlyMine:   false,
+      limit:      limit  ? Number(limit)  : 200,
       offset:     offset ? Number(offset) : 0,
     });
     return res.json(result);

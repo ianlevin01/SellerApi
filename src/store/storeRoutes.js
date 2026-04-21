@@ -5,14 +5,26 @@ import * as storeController from "./storeController.js";
 
 const router = Router();
 
-// Privadas (panel del vendedor)
-router.get ("/config",                requireSeller, storeController.getConfig);
-router.put ("/config",                requireSeller, storeController.updateConfig);
-router.get ("/orders",                requireSeller, storeController.getOrders);
-router.get ("/discounts",             requireSeller, storeController.getDiscounts);
-router.put ("/discounts",             requireSeller, storeController.updateDiscounts);
+// ── Páginas del vendedor ──────────────────────────────────────
+router.get ("/categories",                     requireSeller, storeController.getCategories);
+router.get ("/pages",                          requireSeller, storeController.getPages);
+router.post("/pages",                          requireSeller, storeController.createPage);
+router.get ("/pages/:pageId",                  requireSeller, storeController.getPageConfig);
+router.put ("/pages/:pageId",                  requireSeller, storeController.updatePageConfig);
+router.delete("/pages/:pageId",               requireSeller, storeController.deletePage);
+router.get ("/pages/:pageId/discounts",             requireSeller, storeController.getDiscounts);
+router.put ("/pages/:pageId/discounts",             requireSeller, storeController.updateDiscounts);
+router.get ("/pages/:pageId/products",              requireSeller, storeController.getPageProducts);
+router.post("/pages/:pageId/products/add-all",      requireSeller, storeController.addAllPageProducts);
+router.post("/pages/:pageId/products/:productId",   requireSeller, storeController.addPageProduct);
+router.delete("/pages/:pageId/products/:productId", requireSeller, storeController.removePageProduct);
+router.patch("/pages/:pageId/products/:productId/customize", requireSeller, storeController.customizePageProduct);
 
-// Públicas (tienda visible para compradores)
+// ── Legado: apunta a la primera página del vendedor ───────────
+router.get ("/config",                         requireSeller, storeController.getConfig);
+router.get ("/orders",                         requireSeller, storeController.getOrders);
+
+// ── Públicas (tienda visible para compradores) ────────────────
 router.get ("/public/:slug",           storeController.getPublicStore);
 router.post("/public/:slug/order",     storeController.createPublicOrder);
 router.post("/public/:slug/checkout",  storeController.createCheckout);
