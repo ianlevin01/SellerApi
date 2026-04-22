@@ -25,11 +25,5 @@ app.use("/store/:slug/chat", chatPublicRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-runMigrations()
-  .then(() => {
-    app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
-  })
-  .catch(err => {
-    console.error("Error al ejecutar migraciones:", err);
-    process.exit(1);
-  });
+
+app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
