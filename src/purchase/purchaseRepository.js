@@ -1,98 +1,123 @@
 // src/modules/checkout/checkoutRepository.js
 import pool from "../database/db.js";
 
-async function getPageBySlug(slug) {
-  const { rows } = await db.query(
+// ─── Página del revendedor ───────────────────────────────────────────────────
+
+export async function getPageBySlug(slug) {
+  const { rows } = await pool.query(
     `SELECT * FROM seller_pages WHERE slug = $1`,
     [slug]
   );
-  return rows[0];
+  return rows[0] ?? null;
 }
 
-async function getProductsByIds(ids, pageId) {
-  const { rows } = await db.query(
+// ─── Cotización del dólar ────────────────────────────────────────────────────
+
+export async function getCotizacionDolar() {
+  const NEGOCIO_SISTEMA = "00000000-0000-0000-0000-000000000001";
+  const { rows } = await pool.query(
+    `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1`,
+    [NEGOCIO_SISTEMA]
+  );
+  if (!rows[0]) throw new Error("No se encontró configuración de precio (cotización)");
+  return Number(rows[0].cotizacion_dolar);
+}
+
+// ─── Productos ───────────────────────────────────────────────────────────────
+
+export async function getProductsByIds(ids, pageId) {
+  const { rows } = await pool.query(
     `
-    SELECT p.id, p.name, pp.price
+    SELECT
+      p.id, p.name,
+      (SELECT pc.cost FROM product_costs pc
+       WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd
     FROM products p
     JOIN seller_products sp ON sp.product_id = p.id
-    JOIN product_prices pp ON pp.product_id = p.id AND pp.price_type = 'precio_1'
-    WHERE p.id = ANY($1) AND sp.page_id = $2
+    WHERE p.id = ANY($1)
+      AND sp.page_id = $2
     `,
     [ids, pageId]
   );
   return rows;
 }
 
-async function createWebOrder({ customer, items, total, seller_id, negocio_id }) {
-  const { rows } = await db.query(
-    `
-    INSERT INTO web_orders (customer_name, customer_email, customer_phone, customer_city, total, seller_id, negocio_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
-    RETURNING *
-    `,
-    [
-      customer.name,
-      customer.email,
-      customer.phone,
-      customer.city,
-      total,
-      seller_id,
-      negocio_id,
-    ]
-  );
+// ─── Descuentos del revendedor ───────────────────────────────────────────────
 
-  const order = rows[0];
-
-  for (const item of items) {
-    await db.query(
-      `
-      INSERT INTO web_order_items (web_order_id, product_id, name, quantity, unit_price)
-      VALUES ($1,$2,$3,$4,$5)
-      `,
-      [
-        order.id,
-        item.product_id,
-        item.name,
-        item.quantity,
-        item.unit_price_final,
-      ]
-    );
-  }
-
-  return order;
-}
-
-module.exports = {
-  getPageBySlug,
-  getProductsByIds,
-  getSellerDiscountConfig,
-  getSellerDiscountTiers,
-  createWebOrder,
-};
-
-export async function registerCommission(sellerId, amount) {
-  // ejemplo simple: 10%
-  const commission = amount * 0.1;
-
-  await pool.query(`
-    UPDATE sellers
-    SET balance = balance + $1
-    WHERE id = $2
-  `, [commission, sellerId]);
-}
-
-async function getSellerDiscountConfig(pageId) {
-  const { rows } = await db.query(
+export async function getSellerDiscountConfig(pageId) {
+  const { rows } = await pool.query(
     `SELECT * FROM seller_discounts WHERE page_id = $1`,
     [pageId]
   );
-  return rows[0];
+  return rows[0] ?? null;
 }
 
-async function getSellerDiscountTiers(pageId) {
-  const { rows } = await db.query(
-    `SELECT * FROM seller_discount_tiers WHERE page_id = $1`,
+export async function getSellerDiscountTiers(pageId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM seller_discount_tiers WHERE page_id = $1 ORDER BY threshold ASC`,
     [pageId]
   );
   return rows;
+}
+
+// ─── Crear orden ─────────────────────────────────────────────────────────────
+
+export async function createWebOrder({ customer, items, total, seller_id }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { rows } = await client.query(
+      `
+      INSERT INTO web_orders
+        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+      `,
+      [
+        customer.name,
+        customer.email,
+        customer.phone  ?? null,
+        customer.city   ?? null,
+        customer.notes  ?? null,
+        total,
+        seller_id,
+      ]
+    );
+
+    const order = rows[0];
+
+    for (const item of items) {
+      await client.query(
+        `
+        INSERT INTO web_order_items
+          (web_order_id, product_id, name, quantity, unit_price)
+        VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          order.id,
+          item.product_id,
+          item.name,
+          item.quantity,
+          item.unit_price_final,
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    return order;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+
+export async function updateOrderStatus(orderId, status, mpPaymentId) {
+  await pool.query(
+    `UPDATE web_orders SET color = $1, mp_payment_id = $2 WHERE id = $3`,
+    [status, mpPaymentId, orderId]
+  );
 }

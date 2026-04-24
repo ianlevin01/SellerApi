@@ -1,85 +1,81 @@
 // src/modules/checkout/checkoutService.js
-import mercadopago from "mercadopago";
-import * as checkoutRepository from "./checkoutRepository.js";
+import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
+import * as repo from "./purchaseRepository.js";
 
-mercadopago.configure({
-  access_token: process.env.MP_ACCESS_TOKEN
+const mp = new MercadoPagoConfig({
+  accessToken: process.env.MP_ACCESS_TOKEN,
 });
 
-const repo = require("../repositories/checkout.repository");
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-async function createCheckout({ slug, customer, items }) {
-  // 1. Traer página + seller
-  const page = await repo.getPageBySlug(slug);
-  if (!page) throw new Error("Página no encontrada");
+/**
+ * Aplica markup del revendedor y descuentos por precio/cantidad.
+ * Devuelve { enrichedItems, subtotal, discountTotal, total }
+ */
+function buildPricedItems({ products, items, markup, discountConfig, discountTiers, cotizacion }) {
+  const MARKUP_MINIMO = 1.44; // 144% sobre costo_usd
 
-  // 2. Traer productos
-  const products = await repo.getProductsByIds(
-    items.map(i => i.product_id),
-    page.id
-  );
-
-  // 3. Config descuentos
-  const discountConfig = await repo.getSellerDiscountConfig(page.id);
-  const discountTiers  = await repo.getSellerDiscountTiers(page.id);
-
-  let subtotal = 0;
   let enrichedItems = [];
+  let subtotal = 0;
 
   for (const item of items) {
     const product = products.find(p => p.id === item.product_id);
     if (!product) continue;
 
-    let basePrice = Number(product.price);
+    // Precio base en pesos = costo_usd * cotizacion * 1.44
+    const costoEnPesos = Number(product.costo_usd) * Number(cotizacion);
+    const precioBase   = costoEnPesos * MARKUP_MINIMO;
 
-    // 👉 markup del seller
-    const markup = Number(page.pct_markup || 0);
-    let priceWithMarkup = basePrice * (1 + markup);
+    // Markup adicional del revendedor (ej: 0.2 = 20% extra)
+    const precioConMarkup = precioBase * (1 + Number(markup || 0));
 
     enrichedItems.push({
-      product_id: product.id,
-      name: product.name,
-      quantity: item.quantity,
-      unit_price_base: basePrice,
-      unit_price_markup: priceWithMarkup,
-      unit_price_final: priceWithMarkup, // se ajusta después
+      product_id:         product.id,
+      name:               product.name,
+      quantity:           item.quantity,
+      unit_price_base:    precioBase,
+      unit_price_markup:  precioConMarkup,
+      unit_price_final:   precioConMarkup, // se ajusta abajo si hay descuento
     });
 
-    subtotal += priceWithMarkup * item.quantity;
+    subtotal += precioConMarkup * item.quantity;
   }
 
   let discountTotal = 0;
 
-  // 👉 aplicar descuentos si están activos
-  if (discountConfig?.enabled) {
+  if (discountConfig) {
     let applicableTier = null;
 
+    // Descuento por monto — usa solo tiers de tipo "price"
     if (discountConfig.enabled_price) {
-      applicableTier = discountTiers
+      const priceTiers = discountTiers.filter(t => t.discount_type === "price");
+      applicableTier = priceTiers
         .filter(t => subtotal >= Number(t.threshold))
-        .sort((a, b) => b.threshold - a.threshold)[0];
+        .sort((a, b) => b.threshold - a.threshold)[0] ?? null;
     }
 
+    // Descuento por cantidad — usa solo tiers de tipo "quantity", gana el mayor %
     if (discountConfig.enabled_quantity) {
-      const totalQty = enrichedItems.reduce((acc, i) => acc + i.quantity, 0);
-
-      const tierByQty = discountTiers
+      const totalQty   = enrichedItems.reduce((acc, i) => acc + i.quantity, 0);
+      const qtyTiers   = discountTiers.filter(t => t.discount_type === "quantity");
+      const tierByQty  = qtyTiers
         .filter(t => totalQty >= Number(t.threshold))
-        .sort((a, b) => b.threshold - a.threshold)[0];
+        .sort((a, b) => b.threshold - a.threshold)[0] ?? null;
 
-      if (!applicableTier || (tierByQty && tierByQty.threshold > applicableTier.threshold)) {
+      if (
+        tierByQty &&
+        (!applicableTier || Number(tierByQty.discount_pct) > Number(applicableTier.discount_pct))
+      ) {
         applicableTier = tierByQty;
       }
     }
 
     if (applicableTier) {
       const pct = Number(applicableTier.discount_pct) / 100;
-
       for (const item of enrichedItems) {
-        const discount = item.unit_price_markup * pct;
+        const discount        = item.unit_price_markup * pct;
         item.unit_price_final = item.unit_price_markup - discount;
-
-        discountTotal += discount * item.quantity;
+        discountTotal        += discount * item.quantity;
       }
     }
   }
@@ -89,51 +85,170 @@ async function createCheckout({ slug, customer, items }) {
     0
   );
 
-  // 4. Crear orden
+  return { enrichedItems, subtotal, discountTotal, total };
+}
+
+// ─── createCheckout ──────────────────────────────────────────────────────────
+
+export async function createCheckout({ slug, customer, items, seller }) {
+  // 1. Traer la página del revendedor
+  const page = await repo.getPageBySlug(slug);
+  if (!page) {
+    const err = new Error("Página no encontrada");
+    err.status = 404;
+    throw err;
+  }
+
+  // 2. Cotización del dólar (negocio fijo del sistema)
+  const cotizacion = await repo.getCotizacionDolar();
+
+  // 3. Productos
+  const products = await repo.getProductsByIds(
+    items.map(i => i.product_id),
+    page.id
+  );
+
+  if (!products.length) {
+    const err = new Error("No se encontraron productos válidos");
+    err.status = 400;
+    throw err;
+  }
+
+  // 4. Config de descuentos del revendedor
+  const discountConfig = await repo.getSellerDiscountConfig(page.id);
+  const discountTiers  = await repo.getSellerDiscountTiers(page.id);
+
+  // 5. Calcular precios
+  const { enrichedItems, total } = buildPricedItems({
+    products,
+    items,
+    markup:         Number(page.pct_markup) / 100,
+    discountConfig,
+    discountTiers,
+    cotizacion,
+  });
+
+  // 6. Crear la orden en la BD (estado pendiente hasta que MP confirme)
   const order = await repo.createWebOrder({
     customer,
-    items: enrichedItems,
+    items:     enrichedItems,
     total,
     seller_id: page.seller_id,
-    negocio_id: page.negocio_id,
   });
 
-  // 5. Crear checkout externo (LemonSqueezy)
-  const checkout_url = await createLemonCheckout({
-    items: enrichedItems,
-    total,
-    orderId: order.id,
-  });
+  // 7. Crear preferencia de Mercado Pago
+  const front   = process.env.FRONTEND_URL ?? "";
+  const isLocal = front.includes("localhost") || front.includes("127.0.0.1");
+  console.log("[checkout] FRONTEND_URL:", front, "| isLocal:", isLocal);
+
+  const preferenceBody = {
+    external_reference: String(order.id),
+    items: enrichedItems.map(i => ({
+      id:          String(i.product_id),
+      title:       i.name,
+      quantity:    i.quantity,
+      unit_price:  Number(i.unit_price_final.toFixed(2)),
+      currency_id: "ARS",
+    })),
+    payer: {
+      name:  customer.name,
+      email: customer.email,
+      phone: { number: (customer.phone ?? "").replace(/\D/g, "") || "0" },
+    },
+    ...(front && !isLocal ? {
+      back_urls: {
+        success: `${front}/?shop=${slug}`,
+        failure: `${front}/?shop=${slug}`,
+        pending: `${front}/?shop=${slug}`,
+      },
+      auto_return: "approved",
+    } : {}),
+    ...(!isLocal && process.env.BACKEND_URL ? {
+      notification_url: `${process.env.BACKEND_URL}/seller/purchase/webhook`,
+    } : {}),
+  };
+
+
+  const preference = new Preference(mp);
+  const mpResponse = await preference.create({ body: preferenceBody });
 
   return {
-    checkout_url,
+    checkout_url: process.env.MP_SANDBOX === "true"
+      ? mpResponse.sandbox_init_point
+      : mpResponse.init_point,
     order_number: order.numero,
   };
 }
 
-module.exports = {
-  createCheckout,
+// ─── confirmPayment (llamado desde el front al volver del checkout de MP) ────
+
+const MP_STATUS_MAP = {
+  approved:   "paid",
+  rejected:   "rejected",
+  cancelled:  "cancelled",
+  refunded:   "refunded",
+  in_process: "pending",
+  pending:    "pending",
 };
 
-export async function handleWebhook(body) {
-  if (body.type !== "payment") return;
+export async function confirmPayment(paymentId) {
+  const paymentClient = new Payment(mp);
+  let payment;
+  try {
+    payment = await paymentClient.get({ id: paymentId });
+  } catch (err) {
+    const e = new Error("Pago no encontrado en MercadoPago");
+    e.status = 404;
+    throw e;
+  }
 
-  const paymentId = body.data.id;
+  const newStatus = MP_STATUS_MAP[payment.status];
+  if (newStatus && payment.external_reference) {
+    await repo.updateOrderStatus(payment.external_reference, newStatus, String(payment.id));
+  }
 
-  const payment = await mercadopago.payment.findById(paymentId);
+  return {
+    status:     payment.status,
+    order_id:   payment.external_reference,
+    payment_id: String(payment.id),
+  };
+}
 
-  if (payment.body.status !== "approved") return;
+// ─── handleWebhook ───────────────────────────────────────────────────────────
 
-  const metadata = payment.body.metadata;
+const MP_STATUS_MAP_WEBHOOK = {
+  approved:   "paid",
+  rejected:   "rejected",
+  cancelled:  "cancelled",
+  refunded:   "refunded",
+  in_process: "pending",
+  pending:    "pending",
+};
 
-  // 1. Guardar orden
-  await checkoutRepository.createOrder({
-    seller_id: metadata.seller_id,
-    items: metadata.items,
-    payment_id: paymentId,
-    total: payment.body.transaction_amount
-  });
+export async function handleWebhook(query, body) {
+  const topic = query.topic || body.type;
+  const id    = query.id    || body.data?.id;
 
-  // 2. Calcular comisiones
-  await checkoutRepository.registerCommission(metadata.seller_id, payment.body.transaction_amount);
+  if (topic !== "payment" || !id) return;
+
+  const paymentClient = new Payment(mp);
+  let payment;
+  try {
+    payment = await paymentClient.get({ id });
+  } catch (err) {
+    // En sandbox MP puede notificar IDs que todavía no existen (preflight).
+    console.warn(`[webhook] no se pudo obtener payment ${id}:`, err?.message);
+    return;
+  }
+
+  const newStatus = MP_STATUS_MAP_WEBHOOK[payment.status];
+  if (!newStatus) {
+    console.log(`[webhook] payment ${id} status="${payment.status}" ignorado`);
+    return;
+  }
+
+  const orderId = payment.external_reference;
+  console.log(`[webhook] payment ${id} → ${payment.status} → order ${orderId}`);
+
+  await repo.updateOrderStatus(orderId, newStatus, String(payment.id));
 }

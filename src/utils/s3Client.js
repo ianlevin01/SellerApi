@@ -10,7 +10,7 @@ const s3 = new S3Client({
   },
 });
 
-export const BUCKET = process.env.S3_BUCKET;
+export const BUCKET = process.env.AWS_BUCKET || process.env.S3_BUCKET;
 
 // Devuelve una URL firmada válida por 1 hora
 export async function signKey(key) {
