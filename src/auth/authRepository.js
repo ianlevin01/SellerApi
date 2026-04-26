@@ -89,6 +89,34 @@ export async function createSellerPage({ seller_id, slug, store_name }) {
   );
 }
 
+export async function findSellerByGoogleId(googleId) {
+  const { rows } = await pool.query(
+    `SELECT s.*, sp.slug, sp.store_name, sp.pct_markup
+     FROM sellers s
+     LEFT JOIN seller_pages sp ON sp.seller_id = s.id
+     WHERE s.google_id = $1 AND s.active = true`,
+    [googleId]
+  );
+  return rows[0] || null;
+}
+
+export async function linkGoogleId(sellerId, googleId) {
+  await pool.query(
+    `UPDATE sellers SET google_id = $1 WHERE id = $2`,
+    [googleId, sellerId]
+  );
+}
+
+export async function createSellerWithGoogle({ email, name, google_id }) {
+  const { rows } = await pool.query(
+    `INSERT INTO sellers (email, name, google_id, verified)
+     VALUES ($1, $2, $3, true)
+     RETURNING id, email, name`,
+    [email, name, google_id]
+  );
+  return rows[0];
+}
+
 export async function verifySellerToken(token) {
   const { rows } = await pool.query(
     `UPDATE sellers

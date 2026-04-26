@@ -23,6 +23,27 @@ export async function uploadImage(sellerId, productId, file) {
   return { key, url };
 }
 
+// Upload for product description (no DB entry — not shown in gallery)
+export async function uploadDescriptionMedia(sellerId, productId, file) {
+  if (!file) throw { status: 400, message: "No se recibió archivo" };
+
+  const LIMIT = 5 * 1024 * 1024;
+  if (file.size > LIMIT) throw { status: 413, message: "El archivo supera el límite de 5 MB" };
+
+  const ext = file.mimetype.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+  const key = `sellers/${sellerId}/desc/${productId}/${Date.now()}.${ext}`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket:      BUCKET,
+    Key:         key,
+    Body:        file.buffer,
+    ContentType: file.mimetype,
+  }));
+
+  const url = await signKey(key);
+  return { key, url };
+}
+
 export async function deleteImage(sellerId, key) {
   if (!key) throw { status: 400, message: "Key requerida" };
 

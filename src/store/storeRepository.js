@@ -83,7 +83,7 @@ export async function deletePage(pageId, sellerId) {
 }
 
 export async function getCategories() {
-  const { rows } = await pool.query(`SELECT id, name FROM categories WHERE active = true ORDER BY name ASC`);
+  const { rows } = await pool.query(`SELECT id, name FROM categories ORDER BY name ASC`);
   return rows;
 }
 
@@ -145,6 +145,7 @@ export async function getPublicProducts(pageId, sellerId) {
   const { rows } = await pool.query(
     `SELECT
        p.id, p.code, p.name, p.description, p.category_id,
+       c.name AS category_name,
        (SELECT pc.cost FROM product_costs pc
         WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
        COALESCE(
@@ -158,6 +159,7 @@ export async function getPublicProducts(pageId, sellerId) {
        spc.custom_desc
      FROM seller_products spc
      JOIN products p ON p.id = spc.product_id
+     LEFT JOIN categories c ON c.id = p.category_id
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
      ORDER BY p.name`,
     [pageId, sellerId]
@@ -168,8 +170,8 @@ export async function getPublicProducts(pageId, sellerId) {
 export async function createPublicOrder({ customer, total, seller_id }) {
   const { rows } = await pool.query(
     `INSERT INTO web_orders
-       (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, negocio_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, '00000000-0000-0000-0000-000000000002')
      RETURNING id, numero`,
     [
       customer.name,

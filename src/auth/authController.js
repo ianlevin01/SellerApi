@@ -66,3 +66,10 @@ export async function verifyOtp(req, res) {
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
+
+export async function googleLogin(req, res) {
+  try {
+    const result = await authService.googleLogin(req.body.idToken);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}

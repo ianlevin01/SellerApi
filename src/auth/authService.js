@@ -2,9 +2,10 @@
 import bcrypt     from "bcryptjs";
 import jwt        from "jsonwebtoken";
 import crypto     from "crypto";
-import nodemailer from "nodemailer";
 import twilio     from "twilio";
 import * as authRepository from "./authRepository.js";
+import { firebaseAuth } from "../config/firebase.js";
+import { transporter } from "../config/mailer.js";
 
 const twilioClient = process.env.TWILIO_ACCOUNT_SID
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -13,12 +14,6 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID
 const JWT_SECRET = process.env.JWT_SECRET_SELLER || "seller_secret_dev";
 const BASE_URL   = process.env.SELLER_APP_URL || "http://localhost:5173";
 
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === "true",
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-});
 
 async function sendVerificationEmail(email, token) {
   const link = `${BASE_URL}/verify-email?token=${token}`;
@@ -147,4 +142,58 @@ export async function verifyOtp(sellerId, otp) {
   const valid = await authRepository.verifyOtp(sellerId, otp);
   if (!valid) throw { status: 400, message: "Código incorrecto o expirado" };
   return { message: "Teléfono verificado exitosamente" };
+}
+
+export async function googleLogin(idToken) {
+  if (!firebaseAuth) throw { status: 503, message: "Login con Google no disponible" };
+  if (!idToken) throw { status: 400, message: "Token requerido" };
+
+  let decoded;
+  try {
+    decoded = await firebaseAuth.verifyIdToken(idToken);
+  } catch {
+    throw { status: 401, message: "Token de Google inválido o expirado" };
+  }
+
+  const { uid, email, name } = decoded;
+  if (!email) throw { status: 400, message: "La cuenta de Google no tiene email asociado" };
+
+  const normalizedEmail = email.toLowerCase();
+
+  // 1. Buscar por google_id
+  let seller = await authRepository.findSellerByGoogleId(uid);
+
+  if (!seller) {
+    // 2. Buscar por email (cuenta existente sin Google vinculado)
+    seller = await authRepository.findSellerByEmail(normalizedEmail);
+    if (seller) {
+      await authRepository.linkGoogleId(seller.id, uid);
+    } else {
+      // 3. Crear cuenta nueva (Google ya verificó el email)
+      const displayName = name || normalizedEmail.split("@")[0];
+      const newSeller   = await authRepository.createSellerWithGoogle({
+        email: normalizedEmail,
+        name:  displayName,
+        google_id: uid,
+      });
+      const slug = buildSlug(newSeller.name, newSeller.id);
+      await authRepository.createSellerPage({ seller_id: newSeller.id, slug, store_name: newSeller.name });
+      seller = await authRepository.findSellerByEmail(normalizedEmail);
+    }
+  }
+
+  if (!seller?.active) throw { status: 403, message: "Cuenta inactiva" };
+
+  const token = signToken(seller);
+  return {
+    token,
+    seller: {
+      id:         seller.id,
+      email:      seller.email,
+      name:       seller.name,
+      slug:       seller.slug,
+      store_name: seller.store_name,
+      pct_markup: seller.pct_markup,
+    },
+  };
 }

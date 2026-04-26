@@ -1,6 +1,51 @@
 // src/modules/store/storeService.js
 import * as storeRepository from "./storeRepository.js";
-import { signKeys } from "../utils/s3Client.js";
+import * as authRepository  from "../auth/authRepository.js";
+import { signKeys }         from "../utils/s3Client.js";
+import { transporter }      from "../config/mailer.js";
+
+async function notifySellerNewOrder(sellerId, order, items) {
+  try {
+    const seller = await authRepository.findSellerById(sellerId);
+    if (!seller?.email) return;
+
+    const itemRows = items
+      .map(i => `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">${i.name}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${i.quantity}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${Number(i.unit_price).toLocaleString("es-AR")}</td>
+      </tr>`)
+      .join("");
+
+    await transporter.sendMail({
+      from:    process.env.SMTP_FROM || "noreply@tudominio.com",
+      to:      seller.email,
+      subject: `Nueva venta #${order.numero} en tu tienda`,
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
+          <h2 style="color:#6366f1">¡Tenés una nueva venta!</h2>
+          <p>Se recibió el pedido <strong>#${order.numero}</strong>.</p>
+          <table style="width:100%;border-collapse:collapse;margin:16px 0">
+            <thead>
+              <tr style="background:#f3f4f6">
+                <th style="padding:8px;text-align:left">Producto</th>
+                <th style="padding:8px;text-align:center">Cant.</th>
+                <th style="padding:8px;text-align:right">Precio</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          <p style="font-size:16px;font-weight:bold">
+            Total: $${Number(order.total ?? 0).toLocaleString("es-AR")}
+          </p>
+          <p style="color:#666;font-size:13px">Revisá tu panel para ver el detalle completo del pedido.</p>
+        </div>
+      `,
+    });
+  } catch {
+    // Email failure must never break the order flow
+  }
+}
 
 function getPctGanancia(total) {
   if (total >= 1000000) return 0.60;
@@ -41,11 +86,15 @@ export async function getPageConfig(pageId, sellerId) {
 export async function updatePageConfig(pageId, sellerId, body) {
   if (body.pct_markup !== undefined && Number(body.pct_markup) < 0)
     throw { status: 400, message: "El markup no puede ser negativo" };
-  const { page_name, store_name, store_description, banner_color, pct_markup,
-          tagline, whatsapp, instagram, facebook } = body;
+  const {
+    page_name, store_name, store_description, banner_color, pct_markup,
+    tagline, whatsapp, instagram, facebook,
+    logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
+  } = body;
   const updated = await storeRepository.updatePage(pageId, sellerId, {
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
+    logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
   });
   if (!updated) throw { status: 404, message: "Página no encontrada" };
   return updated;
@@ -77,8 +126,8 @@ export async function getOrders(sellerId) {
     for (const item of order.items) {
       if (!item.product_id) continue;
       const costUsd    = await storeRepository.getCostUsdForProduct(item.product_id);
-      const precio1    = costUsd * cotizacion * 1.44;
-      const diferencia = Number(item.unit_price) - precio1;
+      const base120    = costUsd * cotizacion * 1.20;
+      const diferencia = Number(item.unit_price) - base120;
       if (diferencia > 0) ganancia_bruta += diferencia * item.quantity;
     }
 
@@ -207,6 +256,7 @@ export async function createCheckout(slug, { customer, items, total }) {
     customer, total, seller_id: page.seller_id,
   });
   await storeRepository.createOrderItems(order.id, items);
+  notifySellerNewOrder(page.seller_id, { ...order, total }, items);
 
   // TODO: Integrar LemonSqueezy cuando esté configurado.
   // const checkout_url = await createLemonSqueezyCheckout({ order, items, customer });
@@ -228,6 +278,7 @@ export async function createPublicOrder(slug, { customer, items, total }) {
     customer, total, seller_id: page.seller_id,
   });
   await storeRepository.createOrderItems(order.id, items);
+  notifySellerNewOrder(page.seller_id, { ...order, total }, items);
 
   return { message: "Pedido recibido", numero: order.numero };
 }

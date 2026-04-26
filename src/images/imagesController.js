@@ -31,3 +31,14 @@ export async function deleteImage(req, res) {
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
+
+export async function uploadDescriptionMedia(req, res) {
+  try {
+    const result = await imagesService.uploadDescriptionMedia(
+      req.seller.id,
+      req.params.productId,
+      req.file,
+    );
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
