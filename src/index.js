@@ -13,7 +13,23 @@ import { publicRouter as chatPublicRouter, sellerRouter as chatSellerRouter } fr
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors({ origin: process.env.SELLER_APP_URL || "*" }));
+const SELLER_APP   = process.env.SELLER_APP_URL;
+const STORE_DOMAIN = process.env.STORE_PAGE_DOMAIN;
+
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (origin.startsWith("http://localhost:")) return cb(null, true);
+    if (SELLER_APP   && origin === SELLER_APP)  return cb(null, true);
+    if (STORE_DOMAIN && (
+      origin === `https://${STORE_DOMAIN}` ||
+      origin.endsWith(`.${STORE_DOMAIN}`)
+    )) return cb(null, true);
+    if (!SELLER_APP && !STORE_DOMAIN) return cb(null, true);
+    cb(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 app.use("/seller/auth",     authRoutes);
