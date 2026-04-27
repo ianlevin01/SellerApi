@@ -169,14 +169,14 @@ export async function createCheckout({ slug, customer, items, seller }) {
   };
 
 
-  //const preference = new Preference(mp);
-  //const mpResponse = await preference.create({ body: preferenceBody });
+  const preference = new Preference(mp);
+  const mpResponse = await preference.create({ body: preferenceBody });
 
   return {
     checkout_url: process.env.MP_SANDBOX === "true"
       ? mpResponse.sandbox_init_point
-      : 2,
-    order_number: 2,
+      : mpResponse.init_point,
+    order_number: order.numero,
   };
 }
 

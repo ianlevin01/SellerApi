@@ -90,11 +90,13 @@ export async function updatePageConfig(pageId, sellerId, body) {
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
     logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
+    card_border_radius, card_show_shadow,
   } = body;
   const updated = await storeRepository.updatePage(pageId, sellerId, {
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
     logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
+    card_border_radius, card_show_shadow,
   });
   if (!updated) throw { status: 404, message: "Página no encontrada" };
   return updated;

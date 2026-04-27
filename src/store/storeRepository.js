@@ -43,7 +43,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories }) {
+export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -62,6 +62,8 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
          color_bg            = $15,
          color_text          = $16,
          featured_categories = $17,
+         card_border_radius  = COALESCE($18, card_border_radius),
+         card_show_shadow    = COALESCE($19, card_show_shadow),
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
@@ -69,7 +71,9 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
      pageId, sellerId,
      e(tagline), e(whatsapp), e(instagram), e(facebook),
      e(logo_url), e(font_family), e(color_secondary), e(color_bg), e(color_text),
-     featured_categories ?? null]
+     featured_categories ?? null,
+     card_border_radius != null ? Number(card_border_radius) : null,
+     card_show_shadow   != null ? Boolean(card_show_shadow)  : null]
   );
   return rows[0];
 }
