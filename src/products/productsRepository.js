@@ -17,16 +17,21 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       (SELECT sp.active FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS in_my_store,
       (SELECT sp.custom_name FROM seller_products sp
-       WHERE sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_name,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_name,
       (SELECT sp.custom_desc FROM seller_products sp
-       WHERE sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_desc,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_desc,
+      (SELECT sp.custom_price FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_price,
       COALESCE(
         (SELECT json_agg(pi.key ORDER BY pi.created_at)
          FROM product_images pi WHERE pi.product_id = p.id), '[]'
       ) AS system_images,
       COALESCE(
         (SELECT json_agg(si.key ORDER BY si."order")
-         FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id), '[]'
+         FROM seller_images si
+         WHERE si.seller_id = $2 AND si.product_id = p.id
+           AND ($1::uuid IS NULL OR si.page_id = $1)
+           AND ($1::uuid IS NOT NULL OR si.page_id IS NULL)), '[]'
       ) AS seller_images
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
@@ -90,11 +95,11 @@ export async function removeProduct(pageId, productId) {
   );
 }
 
-export async function customizeProduct(sellerId, productId, { custom_name, custom_desc }) {
+export async function customizeProduct(pageId, sellerId, productId, { custom_name, custom_desc }) {
   await pool.query(
     `UPDATE seller_products
      SET custom_name = $1, custom_desc = $2
-     WHERE seller_id = $3 AND product_id = $4`,
-    [custom_name ?? null, custom_desc ?? null, sellerId, productId]
+     WHERE page_id = $3 AND seller_id = $4 AND product_id = $5`,
+    [custom_name ?? null, custom_desc ?? null, pageId, sellerId, productId]
   );
 }

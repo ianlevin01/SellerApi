@@ -12,12 +12,16 @@ export async function getProducts(pageId, sellerId, filters) {
     getCotizacion(),
   ]);
 
-  const products = await Promise.all(rows.map(async p => ({
-    ...p,
-    precio_1:      p.costo_usd ? Number(p.costo_usd) * cotizacion * 1.44 : null,
-    system_images: await signKeys(p.system_images || []),
-    seller_images: await signKeys(p.seller_images || []),
-  })));
+  const products = await Promise.all(rows.map(async p => {
+    const precio_1 = p.costo_usd ? Number(p.costo_usd) * cotizacion * 1.44 : null;
+    return {
+      ...p,
+      precio_1,
+      custom_price:  p.custom_price ? Number(p.custom_price) : null,
+      system_images: await signKeys(p.system_images || []),
+      seller_images: await signKeys(p.seller_images || []),
+    };
+  }));
 
   return { products, total, limit, offset, hasMore: offset + limit < total };
 }
@@ -38,8 +42,8 @@ export async function removeProduct(pageId, productId) {
   return { message: "Producto quitado de la tienda" };
 }
 
-export async function customizeProduct(sellerId, productId, data) {
+export async function customizeProduct(pageId, sellerId, productId, data) {
   if (!productId) throw { status: 400, message: "productId requerido" };
-  await productsRepository.customizeProduct(sellerId, productId, data);
+  await productsRepository.customizeProduct(pageId, sellerId, productId, data);
   return { message: "Producto actualizado" };
 }

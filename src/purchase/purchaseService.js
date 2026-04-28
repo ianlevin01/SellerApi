@@ -22,12 +22,14 @@ function buildPricedItems({ products, items, markup, discountConfig, discountTie
     const product = products.find(p => p.id === item.product_id);
     if (!product) continue;
 
-    // Precio base en pesos = costo_usd * cotizacion * 1.44
+    // Precio base = costo_usd * cotizacion * 1.44 (piso mínimo)
     const costoEnPesos = Number(product.costo_usd) * Number(cotizacion);
     const precioBase   = costoEnPesos * MARKUP_MINIMO;
 
-    // Markup adicional del revendedor (ej: 0.2 = 20% extra)
-    const precioConMarkup = precioBase * (1 + Number(markup || 0));
+    // Precio de venta: el que fijó el revendedor, o el mínimo si no fijó nada
+    const precioConMarkup = product.custom_price
+      ? Number(product.custom_price)
+      : precioBase;
 
     enrichedItems.push({
       product_id:         product.id,
@@ -122,7 +124,6 @@ export async function createCheckout({ slug, customer, items, seller }) {
   const { enrichedItems, total } = buildPricedItems({
     products,
     items,
-    markup:         Number(page.pct_markup) / 100,
     discountConfig,
     discountTiers,
     cotizacion,

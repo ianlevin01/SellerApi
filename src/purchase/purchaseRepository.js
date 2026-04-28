@@ -27,16 +27,14 @@ export async function getCotizacionDolar() {
 
 export async function getProductsByIds(ids, pageId) {
   const { rows } = await pool.query(
-    `
-    SELECT
-      p.id, p.name,
-      (SELECT pc.cost FROM product_costs pc
-       WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd
-    FROM products p
-    JOIN seller_products sp ON sp.product_id = p.id
-    WHERE p.id = ANY($1)
-      AND sp.page_id = $2
-    `,
+    `SELECT
+       p.id, p.name,
+       (SELECT pc.cost FROM product_costs pc
+        WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+       sp.custom_price
+     FROM products p
+     JOIN seller_products sp ON sp.product_id = p.id
+     WHERE p.id = ANY($1) AND sp.page_id = $2`,
     [ids, pageId]
   );
   return rows;

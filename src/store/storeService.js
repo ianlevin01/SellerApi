@@ -6,41 +6,60 @@ import { transporter }      from "../config/mailer.js";
 
 async function notifySellerNewOrder(sellerId, order, items) {
   try {
-    const seller = await authRepository.findSellerById(sellerId);
-    if (!seller?.email) return;
+    const seller    = await authRepository.findSellerById(sellerId);
+    const adminTo   = process.env.ADMIN_EMAIL || "somosventaz@gmail.com";
+    const from      = process.env.SMTP_FROM   || "noreply@ventaz.online";
+    const totalFmt  = `$${Number(order.total ?? 0).toLocaleString("es-AR")}`;
 
-    const itemRows = items
-      .map(i => `<tr>
+    const itemRows = items.map(i => `
+      <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #eee">${i.name}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${i.quantity}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${Number(i.unit_price).toLocaleString("es-AR")}</td>
-      </tr>`)
-      .join("");
+      </tr>`).join("");
 
+    const table = `
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <thead>
+          <tr style="background:#f3f4f6">
+            <th style="padding:8px;text-align:left">Producto</th>
+            <th style="padding:8px;text-align:center">Cant.</th>
+            <th style="padding:8px;text-align:right">Precio</th>
+          </tr>
+        </thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <p style="font-size:16px;font-weight:bold">Total: ${totalFmt}</p>`;
+
+    // Notificación al vendedor
+    if (seller?.email) {
+      await transporter.sendMail({
+        from,
+        to:      seller.email,
+        subject: `Nueva venta #${order.numero} en tu tienda`,
+        html: `
+          <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
+            <h2 style="color:#6366f1">¡Tenés una nueva venta!</h2>
+            <p>Se recibió el pedido <strong>#${order.numero}</strong>.</p>
+            ${table}
+            <p style="color:#666;font-size:13px">Revisá tu panel para ver el detalle completo.</p>
+          </div>`,
+      });
+    }
+
+    // Notificación al admin
     await transporter.sendMail({
-      from:    process.env.SMTP_FROM || "noreply@tudominio.com",
-      to:      seller.email,
-      subject: `Nueva venta #${order.numero} en tu tienda`,
+      from,
+      to:      adminTo,
+      subject: `Nueva venta #${order.numero} — ${seller?.name || seller?.email || sellerId}`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
-          <h2 style="color:#6366f1">¡Tenés una nueva venta!</h2>
-          <p>Se recibió el pedido <strong>#${order.numero}</strong>.</p>
-          <table style="width:100%;border-collapse:collapse;margin:16px 0">
-            <thead>
-              <tr style="background:#f3f4f6">
-                <th style="padding:8px;text-align:left">Producto</th>
-                <th style="padding:8px;text-align:center">Cant.</th>
-                <th style="padding:8px;text-align:right">Precio</th>
-              </tr>
-            </thead>
-            <tbody>${itemRows}</tbody>
-          </table>
-          <p style="font-size:16px;font-weight:bold">
-            Total: $${Number(order.total ?? 0).toLocaleString("es-AR")}
-          </p>
-          <p style="color:#666;font-size:13px">Revisá tu panel para ver el detalle completo del pedido.</p>
-        </div>
-      `,
+          <h2 style="color:#6366f1">Nueva venta registrada</h2>
+          <p>Pedido <strong>#${order.numero}</strong> de la tienda de
+             <strong>${seller?.name || seller?.email || "—"}</strong>
+             (${seller?.email || "—"}).</p>
+          ${table}
+        </div>`,
     });
   } catch {
     // Email failure must never break the order flow
@@ -159,11 +178,9 @@ export async function getPublicStore(slug) {
     storeRepository.getDiscountConfig(page.id),
     storeRepository.getAllDiscountTiers(page.id),
   ]);
-  const pct = Number(page.pct_markup) / 100;
-
   const productsWithPrice = await Promise.all(products.map(async p => {
     const precio_1    = p.costo_usd ? Number(p.costo_usd) * cotizacion * 1.44 : null;
-    const precio_venta = precio_1 ? Number((precio_1 * (1 + pct)).toFixed(2)) : null;
+    const precio_venta = p.custom_price ? Number(p.custom_price) : precio_1;
     return {
       ...p,
       images:       await signKeys(p.images || []),
@@ -265,6 +282,21 @@ export async function createCheckout(slug, { customer, items, total }) {
   // if (checkout_url) return { numero: order.numero, checkout_url };
 
   return { numero: order.numero, order_number: order.numero };
+}
+
+export async function setProductPrice(pageId, sellerId, productId, customPrice) {
+  const page = await storeRepository.getPageById(pageId, sellerId);
+  if (!page) throw { status: 404, message: "Página no encontrada" };
+
+  const cotizacion = await storeRepository.getCotizacion();
+  const costUsd    = await storeRepository.getCostUsdForProduct(productId);
+  const precio1    = costUsd * cotizacion * 1.44;
+
+  if (precio1 > 0 && Number(customPrice) < precio1 - 0.01)
+    throw { status: 400, message: `El precio mínimo para este producto es $${precio1.toFixed(2)}` };
+
+  await storeRepository.setProductPrice(pageId, productId, Number(customPrice));
+  return { message: "Precio actualizado", precio_1: precio1 };
 }
 
 export async function createPublicOrder(slug, { customer, items, total }) {

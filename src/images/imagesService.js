@@ -3,7 +3,7 @@ import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import s3, { BUCKET, signKey } from "../utils/s3Client.js";
 import * as imagesRepository from "./imagesRepository.js";
 
-export async function uploadImage(sellerId, productId, file) {
+export async function uploadImage(sellerId, productId, file, pageId = null) {
   if (!file) throw { status: 400, message: "No se recibió imagen" };
 
   const ext = file.mimetype.split("/")[1] || "jpg";
@@ -16,8 +16,8 @@ export async function uploadImage(sellerId, productId, file) {
     ContentType: file.mimetype,
   }));
 
-  const order = await imagesRepository.countImages(sellerId, productId);
-  await imagesRepository.insertImage(sellerId, productId, key, order);
+  const order = await imagesRepository.countImages(sellerId, productId, pageId);
+  await imagesRepository.insertImage(sellerId, productId, key, order, pageId);
 
   const url = await signKey(key);
   return { key, url };
@@ -56,8 +56,8 @@ export async function deleteImage(sellerId, key) {
   return { message: "Imagen eliminada" };
 }
 
-export async function getImages(sellerId, productId) {
-  const rows = await imagesRepository.getImages(sellerId, productId);
+export async function getImages(sellerId, productId, pageId = null) {
+  const rows = await imagesRepository.getImages(sellerId, productId, pageId);
   return Promise.all(rows.map(async img => ({
     ...img,
     url: await signKey(img.key),

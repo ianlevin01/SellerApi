@@ -9,17 +9,20 @@ function handleError(res, err) {
 
 export async function getImages(req, res) {
   try {
-    const result = await imagesService.getImages(req.seller.id, req.params.productId);
+    const pageId = req.query.pageId || null;
+    const result = await imagesService.getImages(req.seller.id, req.params.productId, pageId);
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
 
 export async function uploadImage(req, res) {
   try {
+    const pageId = req.body.pageId || req.query.pageId || null;
     const result = await imagesService.uploadImage(
       req.seller.id,
       req.params.productId,
-      req.file
+      req.file,
+      pageId,
     );
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }

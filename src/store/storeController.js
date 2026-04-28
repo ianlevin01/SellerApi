@@ -133,7 +133,17 @@ export async function removePageProduct(req, res) {
 
 export async function customizePageProduct(req, res) {
   try {
-    const result = await productsService.customizeProduct(req.seller.id, req.params.productId, req.body);
+    const result = await productsService.customizeProduct(req.params.pageId, req.seller.id, req.params.productId, req.body);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function setProductPrice(req, res) {
+  try {
+    const { custom_price } = req.body;
+    if (custom_price === undefined || custom_price === null)
+      return res.status(400).json({ message: "custom_price requerido" });
+    const result = await storeService.setProductPrice(req.params.pageId, req.seller.id, req.params.productId, custom_price);
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }

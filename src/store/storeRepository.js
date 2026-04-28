@@ -152,9 +152,12 @@ export async function getPublicProducts(pageId, sellerId) {
        c.name AS category_name,
        (SELECT pc.cost FROM product_costs pc
         WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+       spc.custom_price,
        COALESCE(
          (SELECT json_agg(si.key ORDER BY si."order")
-          FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id),
+          FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id AND si.page_id = $1),
+         (SELECT json_agg(si.key ORDER BY si."order")
+          FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id AND si.page_id IS NULL),
          (SELECT json_agg(pi.key ORDER BY pi.created_at)
           FROM product_images pi WHERE pi.product_id = p.id),
          '[]'
@@ -169,6 +172,16 @@ export async function getPublicProducts(pageId, sellerId) {
     [pageId, sellerId]
   );
   return rows;
+}
+
+export async function setProductPrice(pageId, productId, customPrice) {
+  const { rows } = await pool.query(
+    `UPDATE seller_products SET custom_price = $1
+     WHERE page_id = $2 AND product_id = $3
+     RETURNING *`,
+    [customPrice, pageId, productId]
+  );
+  return rows[0];
 }
 
 export async function createPublicOrder({ customer, total, seller_id }) {

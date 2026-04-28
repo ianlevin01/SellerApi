@@ -19,6 +19,7 @@ router.post("/pages/:pageId/products/add-all",      requireSeller, storeControll
 router.post("/pages/:pageId/products/:productId",   requireSeller, storeController.addPageProduct);
 router.delete("/pages/:pageId/products/:productId", requireSeller, storeController.removePageProduct);
 router.patch("/pages/:pageId/products/:productId/customize", requireSeller, storeController.customizePageProduct);
+router.patch("/pages/:pageId/products/:productId/price",    requireSeller, storeController.setProductPrice);
 
 // ── Legado: apunta a la primera página del vendedor ───────────
 router.get ("/config",                         requireSeller, storeController.getConfig);
