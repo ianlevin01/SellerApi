@@ -106,7 +106,9 @@ export async function getOrders(sellerId) {
   const { rows } = await pool.query(
     `SELECT
        wo.id, wo.numero, wo.customer_name, wo.customer_email,
-       wo.customer_city, wo.total, wo.color, wo.created_at, wo.order_id,
+       wo.customer_city, wo.total,
+       COALESCE(wo.shipping_amount, 0) AS shipping_amount,
+       wo.color, wo.created_at, wo.order_id,
        COALESCE(
          (SELECT json_agg(json_build_object(
            'name',       woi.name,
@@ -115,7 +117,10 @@ export async function getOrders(sellerId) {
            'product_id', woi.product_id
          )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
          '[]'
-       ) AS items
+       ) AS items,
+       (SELECT row_to_json(os)
+        FROM order_shipping os WHERE os.web_order_id = wo.id LIMIT 1
+       ) AS shipping
      FROM web_orders wo
      WHERE wo.seller_id = $1
      ORDER BY wo.created_at DESC`,

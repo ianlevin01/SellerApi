@@ -26,8 +26,10 @@ router.get ("/config",                         requireSeller, storeController.ge
 router.get ("/orders",                         requireSeller, storeController.getOrders);
 
 // ── Públicas (tienda visible para compradores) ────────────────
-router.get ("/public/:slug",           storeController.getPublicStore);
-router.post("/public/:slug/order",     storeController.createPublicOrder);
-router.post("/public/:slug/checkout",  storeController.createCheckout);
+router.get ("/public/:slug",                       storeController.getPublicStore);
+router.post("/public/:slug/order",                 storeController.createPublicOrder);
+router.post("/public/:slug/checkout",              storeController.createCheckout);
+router.get ("/public/:slug/shipping/rates",        storeController.getShippingRates);
+router.get ("/public/:slug/shipping/agencies",     storeController.getShippingAgencies);
 
 export default router;

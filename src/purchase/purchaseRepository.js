@@ -60,7 +60,7 @@ export async function getSellerDiscountTiers(pageId) {
 
 // ─── Crear orden ─────────────────────────────────────────────────────────────
 
-export async function createWebOrder({ customer, items, total, seller_id }) {
+export async function createWebOrder({ customer, items, total, seller_id, shipping_amount = 0 }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -68,8 +68,8 @@ export async function createWebOrder({ customer, items, total, seller_id }) {
     const { rows } = await client.query(
       `
       INSERT INTO web_orders
-        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
       `,
       [
@@ -80,6 +80,7 @@ export async function createWebOrder({ customer, items, total, seller_id }) {
         customer.notes  ?? null,
         total,
         seller_id,
+        shipping_amount,
       ]
     );
 

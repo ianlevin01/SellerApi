@@ -138,6 +138,24 @@ export async function customizePageProduct(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+export async function getShippingRates(req, res) {
+  try {
+    const cp = req.query.cp || req.query.postal_code || "";
+    if (!cp) return res.status(400).json({ message: "cp requerido" });
+    const result = await storeService.getShippingRates(req.params.slug, cp);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getShippingAgencies(req, res) {
+  try {
+    const province = req.query.province || req.query.provincia || "";
+    if (!province) return res.status(400).json({ message: "province requerida" });
+    const result = await storeService.getShippingAgencies(req.params.slug, province);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
 export async function setProductPrice(req, res) {
   try {
     const { custom_price } = req.body;

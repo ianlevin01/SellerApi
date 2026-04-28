@@ -8,14 +8,15 @@ const router = Router();
 
 router.post("/public/:slug/checkout", async (req, res) => {
   try {
-    const { customer, items } = req.body;
+    const { customer, items, shipping } = req.body;
     const { slug } = req.params;
 
     const result = await checkoutService.createCheckout({
       slug,
       customer,
       items,
-      seller: req.seller, // { id, negocio_id, ... } inyectado por el middleware
+      shipping,
+      seller: req.seller,
     });
     return res.json(result);
   } catch (err) {

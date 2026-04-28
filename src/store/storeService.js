@@ -1,8 +1,9 @@
 // src/modules/store/storeService.js
-import * as storeRepository from "./storeRepository.js";
-import * as authRepository  from "../auth/authRepository.js";
-import { signKeys }         from "../utils/s3Client.js";
-import { transporter }      from "../config/mailer.js";
+import * as storeRepository  from "./storeRepository.js";
+import * as authRepository   from "../auth/authRepository.js";
+import * as shippingService  from "../shipping/shippingService.js";
+import { signKeys }          from "../utils/s3Client.js";
+import { transporter }       from "../config/mailer.js";
 
 async function notifySellerNewOrder(sellerId, order, items) {
   try {
@@ -282,6 +283,20 @@ export async function createCheckout(slug, { customer, items, total }) {
   // if (checkout_url) return { numero: order.numero, checkout_url };
 
   return { numero: order.numero, order_number: order.numero };
+}
+
+// ── Envíos (MiCorreo) ─────────────────────────────────────────
+
+export async function getShippingRates(slug, cp) {
+  const page = await storeRepository.getPageBySlug(slug);
+  if (!page) throw { status: 404, message: "Tienda no encontrada" };
+  return shippingService.getRates(cp);
+}
+
+export async function getShippingAgencies(slug, province) {
+  const page = await storeRepository.getPageBySlug(slug);
+  if (!page) throw { status: 404, message: "Tienda no encontrada" };
+  return shippingService.getAgencies(province);
 }
 
 export async function setProductPrice(pageId, sellerId, productId, customPrice) {

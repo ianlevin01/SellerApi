@@ -1,6 +1,8 @@
 // src/modules/checkout/checkoutService.js
 import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
-import * as repo from "./purchaseRepository.js";
+import * as repo               from "./purchaseRepository.js";
+import * as shippingService    from "../shipping/shippingService.js";
+import * as shippingRepository from "../shipping/shippingRepository.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -92,7 +94,7 @@ function buildPricedItems({ products, items, markup, discountConfig, discountTie
 
 // ─── createCheckout ──────────────────────────────────────────────────────────
 
-export async function createCheckout({ slug, customer, items, seller }) {
+export async function createCheckout({ slug, customer, items, shipping, seller }) {
   // 1. Traer la página del revendedor
   const page = await repo.getPageBySlug(slug);
   if (!page) {
@@ -120,8 +122,8 @@ export async function createCheckout({ slug, customer, items, seller }) {
   const discountConfig = await repo.getSellerDiscountConfig(page.id);
   const discountTiers  = await repo.getSellerDiscountTiers(page.id);
 
-  // 5. Calcular precios
-  const { enrichedItems, total } = buildPricedItems({
+  // 5. Calcular precios de productos
+  const { enrichedItems, total: productsTotal } = buildPricedItems({
     products,
     items,
     discountConfig,
@@ -129,30 +131,67 @@ export async function createCheckout({ slug, customer, items, seller }) {
     cotizacion,
   });
 
-  // 6. Crear la orden en la BD (estado pendiente hasta que MP confirme)
+  // 6. Sumar costo de envío al total
+  const shippingAmount = shipping ? Number(shipping.amount || 0) : 0;
+  const total          = productsTotal + shippingAmount;
+
+  // 7. Crear la orden en la BD (estado pendiente hasta que MP confirme)
   const order = await repo.createWebOrder({
     customer,
-    items:     enrichedItems,
+    items:           enrichedItems,
     total,
-    seller_id: page.seller_id,
+    seller_id:       page.seller_id,
+    shipping_amount: shippingAmount,
   });
 
-  // 7. Crear preferencia de Mercado Pago
+  // 8. Guardar detalle de envío y registrar en MiCorreo (en background, no bloquea)
+  if (shipping) {
+    shippingRepository.saveOrderShipping(order.id, shipping)
+      .catch(err => console.error("[shipping] saveOrderShipping error:", err.message));
+
+    shippingService.importShipment({
+      orderId:     order.id,
+      orderNumero: order.numero,
+      customer,
+      shipping,
+      total,
+    }).then(result => {
+      if (result?.tracking_code) {
+        // Update tracking code once we have it
+        shippingRepository.saveOrderShipping(order.id, shipping, result.tracking_code)
+          .catch(() => {});
+      }
+    }).catch(err => console.error("[shipping] importShipment error:", err.message));
+  }
+
+  // 9. Crear preferencia de Mercado Pago
   const front   = process.env.FRONTEND_URL ?? "";
   const isLocal = front.includes("localhost") || front.includes("127.0.0.1");
-  console.log("[checkout] FRONTEND_URL:", front, "| isLocal:", isLocal);
+
+  const mpItems = enrichedItems.map(i => ({
+    id:          String(i.product_id),
+    title:       i.name,
+    quantity:    i.quantity,
+    unit_price:  Number(i.unit_price_final.toFixed(2)),
+    currency_id: "ARS",
+  }));
+
+  // Add shipping as a separate line item in the MP preference
+  if (shippingAmount > 0) {
+    mpItems.push({
+      id:          "shipping",
+      title:       shipping.service_name || "Envío",
+      quantity:    1,
+      unit_price:  Number(shippingAmount.toFixed(2)),
+      currency_id: "ARS",
+    });
+  }
 
   const preferenceBody = {
     external_reference: String(order.id),
-    items: enrichedItems.map(i => ({
-      id:          String(i.product_id),
-      title:       i.name,
-      quantity:    i.quantity,
-      unit_price:  Number(i.unit_price_final.toFixed(2)),
-      currency_id: "ARS",
-    })),
+    items: mpItems,
     payer: {
-      name:  customer.name,
+      name:  customer.name || `${customer.firstName || ""} ${customer.lastName || ""}`.trim(),
       email: customer.email,
       phone: { number: (customer.phone ?? "").replace(/\D/g, "") || "0" },
     },
@@ -174,9 +213,7 @@ export async function createCheckout({ slug, customer, items, seller }) {
   const mpResponse = await preference.create({ body: preferenceBody });
 
   return {
-    checkout_url: process.env.MP_SANDBOX === "true"
-      ? mpResponse.sandbox_init_point
-      : mpResponse.init_point,
+    checkout_url: mpResponse.init_point,
     order_number: order.numero,
   };
 }
