@@ -12,7 +12,7 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID
   : null;
 
 const JWT_SECRET = process.env.JWT_SECRET_SELLER || "seller_secret_dev";
-const BASE_URL   = process.env.SELLER_APP_URL || "http://localhost:5173";
+const BASE_URL   = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 
 
 async function sendVerificationEmail(email, token) {
