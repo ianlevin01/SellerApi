@@ -8,6 +8,7 @@ import productsRoutes from "./products/productsRoutes.js";
 import storeRoutes    from "./store/storeRoutes.js";
 import imagesRoutes   from "./images/imagesRoutes.js";
 import purchaseRoutes from './purchase/purchaseRoutes.js'
+import payoutsRoutes  from './payouts/payoutsRoutes.js';
 import { publicRouter as chatPublicRouter, sellerRouter as chatSellerRouter } from "./chat/chatRoutes.js";
 
 const app  = express();
@@ -39,6 +40,7 @@ app.use("/seller/images",   imagesRoutes);
 app.use("/seller/chat",     chatSellerRouter);
 app.use("/store/:slug/chat", chatPublicRouter);
 app.use("/seller/purchase", purchaseRoutes);
+app.use("/seller/payouts",  payoutsRoutes);
 
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

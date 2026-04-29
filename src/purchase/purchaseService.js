@@ -3,6 +3,7 @@ import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
 import * as repo               from "./purchaseRepository.js";
 import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
+import * as payoutsService     from "../payouts/payoutsService.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -243,6 +244,11 @@ export async function confirmPayment(paymentId) {
   const newStatus = MP_STATUS_MAP[payment.status];
   if (newStatus && payment.external_reference) {
     await repo.updateOrderStatus(payment.external_reference, newStatus, String(payment.id));
+
+    if (newStatus === "paid") {
+      payoutsService.createEarningForOrder(payment.external_reference)
+        .catch(err => console.error("[payouts] createEarning error:", err.message));
+    }
   }
 
   return {
@@ -289,4 +295,9 @@ export async function handleWebhook(query, body) {
   console.log(`[webhook] payment ${id} → ${payment.status} → order ${orderId}`);
 
   await repo.updateOrderStatus(orderId, newStatus, String(payment.id));
+
+  if (newStatus === "paid") {
+    payoutsService.createEarningForOrder(orderId)
+      .catch(err => console.error("[payouts] createEarning error:", err.message));
+  }
 }
