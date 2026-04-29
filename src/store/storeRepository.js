@@ -43,7 +43,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow }) {
+export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -64,6 +64,10 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
          featured_categories = $17,
          card_border_radius  = COALESCE($18, card_border_radius),
          card_show_shadow    = COALESCE($19, card_show_shadow),
+         hero_headline       = $20,
+         hero_image_url      = $21,
+         promo_text          = $22,
+         show_promo_bar      = COALESCE($23, show_promo_bar),
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
@@ -73,7 +77,9 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
      e(logo_url), e(font_family), e(color_secondary), e(color_bg), e(color_text),
      featured_categories ?? null,
      card_border_radius != null ? Number(card_border_radius) : null,
-     card_show_shadow   != null ? Boolean(card_show_shadow)  : null]
+     card_show_shadow   != null ? Boolean(card_show_shadow)  : null,
+     e(hero_headline), e(hero_image_url), e(promo_text),
+     show_promo_bar != null ? Boolean(show_promo_bar) : null]
   );
   return rows[0];
 }

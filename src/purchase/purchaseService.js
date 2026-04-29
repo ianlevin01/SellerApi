@@ -166,8 +166,8 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   }
 
   // 9. Crear preferencia de Mercado Pago
-  const front   = process.env.FRONTEND_URL ?? "";
-  const isLocal = front.includes("localhost") || front.includes("127.0.0.1");
+  const storeDomain = process.env.STORE_DOMAIN ?? "";
+  const isLocal     = !storeDomain;
 
   const mpItems = enrichedItems.map(i => ({
     id:          String(i.product_id),
@@ -196,11 +196,11 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
       email: customer.email,
       phone: { number: (customer.phone ?? "").replace(/\D/g, "") || "0" },
     },
-    ...(front && !isLocal ? {
+    ...(storeDomain ? {
       back_urls: {
-        success: `${front}/?shop=${slug}`,
-        failure: `${front}/?shop=${slug}`,
-        pending: `${front}/?shop=${slug}`,
+        success: `https://${slug}.${storeDomain}/`,
+        failure: `https://${slug}.${storeDomain}/`,
+        pending: `https://${slug}.${storeDomain}/`,
       },
       auto_return: "approved",
     } : {}),
