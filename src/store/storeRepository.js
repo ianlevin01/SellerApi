@@ -150,7 +150,7 @@ export async function getPageBySlug(slug) {
     `SELECT sp.*, s.name AS seller_name
      FROM seller_pages sp
      JOIN sellers s ON s.id = sp.seller_id
-     WHERE sp.slug = $1 AND sp.active = true`,
+     WHERE sp.slug = $1 AND sp.active = true AND s.active = true`,
     [slug]
   );
   return rows[0] || null;
