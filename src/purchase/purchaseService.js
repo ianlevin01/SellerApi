@@ -204,9 +204,10 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
       },
       auto_return: "approved",
     } : {}),
-    ...(!isLocal && process.env.BACKEND_URL ? {
-      notification_url: `${process.env.BACKEND_URL}/seller/purchase/webhook`,
-    } : {}),
+    // notification_url desactivado temporalmente para diagnóstico
+    // ...(!isLocal && process.env.BACKEND_URL ? {
+    //   notification_url: `${process.env.BACKEND_URL}/seller/purchase/webhook`,
+    // } : {}),
   };
 
 
