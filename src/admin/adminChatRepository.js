@@ -56,6 +56,51 @@ export async function markAdminMessagesRead(conversationId, asSeenBySender) {
     [conversationId, otherSender]);
 }
 
+// ── Monitor: sellers list + their conversations ──────────────
+
+export async function getSellersForMonitor() {
+  const { rows } = await pool.query(`
+    SELECT s.id, s.name, s.email,
+           COUNT(DISTINCT c.id)::int AS conversation_count,
+           MAX(c.updated_at)        AS last_activity
+    FROM sellers s
+    LEFT JOIN conversations c ON c.seller_id = s.id
+    WHERE s.active = true
+    GROUP BY s.id
+    ORDER BY last_activity DESC NULLS LAST, s.name`);
+  return rows;
+}
+
+export async function getConversationsBySeller(sellerId) {
+  const { rows } = await pool.query(`
+    SELECT c.id, c.customer_name, c.customer_email, c.created_at, c.updated_at,
+           (SELECT m.body FROM messages m WHERE m.conversation_id = c.id
+            ORDER BY m.created_at DESC LIMIT 1) AS last_message,
+           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id)::int AS message_count
+    FROM conversations c
+    WHERE c.seller_id = $1
+    ORDER BY c.updated_at DESC`, [sellerId]);
+  return rows;
+}
+
+// ── Chat: all sellers (even without conversations) ───────────
+
+export async function getAllSellersWithChatInfo() {
+  const { rows } = await pool.query(`
+    SELECT s.id AS seller_id, s.name AS seller_name, s.email AS seller_email,
+           ac.id AS conversation_id, ac.updated_at,
+           (SELECT am.body FROM admin_messages am
+            WHERE am.conversation_id = ac.id ORDER BY am.created_at DESC LIMIT 1) AS last_message,
+           COALESCE((SELECT COUNT(*) FROM admin_messages am
+            WHERE am.conversation_id = ac.id AND am.sender = 'seller'
+            AND am.read_at IS NULL), 0)::int AS unread_count
+    FROM sellers s
+    LEFT JOIN admin_conversations ac ON ac.seller_id = s.id
+    WHERE s.active = true
+    ORDER BY ac.updated_at DESC NULLS LAST, s.name`);
+  return rows;
+}
+
 // ── Monitor customer <-> seller conversations ────────────────
 
 export async function getMonitorConversations() {

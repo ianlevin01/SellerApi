@@ -180,6 +180,44 @@ export async function markPayoutTransferred(id) {
   return rows[0];
 }
 
+// ── Sales report ─────────────────────────────────────────────
+
+export async function getSalesReport({ from, to, sellerId } = {}) {
+  const conds  = ["wo.color = 'paid'"];
+  const params = [];
+
+  if (from)     { params.push(from);     conds.push(`wo.created_at >= $${params.length}`); }
+  if (to)       { params.push(to);       conds.push(`wo.created_at <  $${params.length} + interval '1 day'`); }
+  if (sellerId) { params.push(sellerId); conds.push(`wo.seller_id = $${params.length}`); }
+
+  const where = `WHERE ${conds.join(" AND ")}`;
+
+  const { rows: [summary] } = await pool.query(`
+    SELECT
+      COUNT(wo.id)::int            AS total_orders,
+      COALESCE(SUM(wo.total), 0)   AS total_revenue,
+      COALESCE(AVG(wo.total), 0)   AS avg_ticket,
+      COALESCE(SUM(se.amount), 0)  AS total_earnings
+    FROM web_orders wo
+    JOIN sellers s ON s.id = wo.seller_id
+    LEFT JOIN seller_earnings se ON se.web_order_id = wo.id
+    ${where}`, params);
+
+  const { rows: bySeller } = await pool.query(`
+    SELECT s.id, s.name AS seller_name, s.email AS seller_email,
+           COUNT(wo.id)::int            AS order_count,
+           COALESCE(SUM(wo.total), 0)   AS revenue,
+           COALESCE(SUM(se.amount), 0)  AS earnings
+    FROM web_orders wo
+    JOIN sellers s ON s.id = wo.seller_id
+    LEFT JOIN seller_earnings se ON se.web_order_id = wo.id
+    ${where}
+    GROUP BY s.id, s.name, s.email
+    ORDER BY revenue DESC`, params);
+
+  return { summary, by_seller: bySeller };
+}
+
 // ── Catalog ──────────────────────────────────────────────────
 
 export async function getAllProducts() {

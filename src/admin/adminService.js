@@ -79,3 +79,7 @@ export async function updatePriceConfig(cotizacion) {
   await repo.updatePriceConfig(Number(cotizacion));
   return { message: "Cotización actualizada" };
 }
+
+export async function getSalesReport(filters) {
+  return repo.getSalesReport(filters);
+}

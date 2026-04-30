@@ -39,6 +39,13 @@ router.patch("/earnings/:id/approve", h(req => svc.approveEarning(req.params.id)
 router.get("/payouts",                    h(req => svc.getPayouts(req.query.status)));
 router.patch("/payouts/:id/transferred",  h(req => svc.markPayoutTransferred(req.params.id)));
 
+// Reports
+router.get("/reports/sales", h(req => svc.getSalesReport({
+  from:     req.query.from      || null,
+  to:       req.query.to        || null,
+  sellerId: req.query.seller_id || null,
+})));
+
 // Catalog
 router.get("/products",                      h(() => svc.getProducts()));
 router.put("/products/:id/cost",             h(req => svc.updateProductCost(req.params.id, req.body.cost)));
