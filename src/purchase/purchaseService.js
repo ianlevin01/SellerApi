@@ -210,6 +210,13 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   };
 
 
+  // TEST ONLY — remove before going live
+  if (process.env.SKIP_PAYMENT === "true") {
+    await repo.updateOrderStatus(order.id, "paid", "test-skip-payment");
+    console.log("[TEST] SKIP_PAYMENT activo — orden marcada como pagada sin pasar por MP");
+    return { order_number: order.numero };
+  }
+
   const preference = new Preference(mp);
   const mpResponse = await preference.create({ body: preferenceBody });
 
