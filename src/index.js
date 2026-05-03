@@ -14,6 +14,7 @@ import { publicRouter as chatPublicRouter, sellerRouter as chatSellerRouter } fr
 import adminAuthRoutes  from "./admin/adminAuthRoutes.js";
 import adminRoutes      from "./admin/adminRoutes.js";
 import { adminChatRouter, adminMonitorRouter, sellerAdminChatRouter } from "./admin/adminChatRoutes.js";
+import { startStockListener } from "./stock/stockListener.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -58,3 +59,5 @@ app.use("/admin/monitor",      adminMonitorRouter);
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
+
+startStockListener();

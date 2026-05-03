@@ -43,7 +43,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar }) {
+export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -68,6 +68,7 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
          hero_image_url      = $21,
          promo_text          = $22,
          show_promo_bar      = COALESCE($23, show_promo_bar),
+         theme_config        = COALESCE($24::jsonb, theme_config),
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
@@ -79,7 +80,8 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
      card_border_radius != null ? Number(card_border_radius) : null,
      card_show_shadow   != null ? Boolean(card_show_shadow)  : null,
      e(hero_headline), e(hero_image_url), e(promo_text),
-     show_promo_bar != null ? Boolean(show_promo_bar) : null]
+     show_promo_bar != null ? Boolean(show_promo_bar) : null,
+     theme_config != null ? JSON.stringify(theme_config) : null]
   );
   return rows[0];
 }
@@ -179,6 +181,7 @@ export async function getPublicProducts(pageId, sellerId) {
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
+       AND (COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) >= 10
      ORDER BY p.name`,
     [pageId, sellerId]
   );

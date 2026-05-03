@@ -12,6 +12,9 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       COALESCE(
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) AS stock_total,
+      GREATEST(0, COALESCE(
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+      ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       (SELECT sp.id FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS seller_product_id,
       (SELECT sp.active FROM seller_products sp
