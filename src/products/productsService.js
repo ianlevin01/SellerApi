@@ -4,7 +4,10 @@ import { getCotizacion, getPageById } from "../store/storeRepository.js";
 import { signKeys } from "../utils/s3Client.js";
 
 export async function getProducts(pageId, sellerId, filters) {
-  const limit  = Math.min(Number(filters.limit) || 200, 2000);
+  const hasFilters = filters.search || filters.categoryId || filters.onlyMine;
+  const limit  = hasFilters
+    ? Math.min(Number(filters.limit) || 2000, 2000)
+    : Math.min(Number(filters.limit) || 50, 50);
   const offset = Number(filters.offset) || 0;
 
   const [{ rows, total }, cotizacion] = await Promise.all([
