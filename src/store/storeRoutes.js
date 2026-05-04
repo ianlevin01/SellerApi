@@ -2,6 +2,8 @@
 import { Router }    from "express";
 import requireSeller from "../middleware/requireSeller.js";
 import * as storeController from "./storeController.js";
+import * as intCtrl  from "../integrations/integrationsController.js";
+import * as revCtrl  from "../reviews/reviewsController.js";
 
 const router = Router();
 
@@ -21,6 +23,17 @@ router.delete("/pages/:pageId/products/:productId", requireSeller, storeControll
 router.patch("/pages/:pageId/products/:productId/customize", requireSeller, storeController.customizePageProduct);
 router.patch("/pages/:pageId/products/:productId/price",    requireSeller, storeController.setProductPrice);
 
+// ── Integraciones ─────────────────────────────────────────────
+router.get   ("/pages/:pageId/integrations",              requireSeller, intCtrl.list);
+router.post  ("/pages/:pageId/integrations/:key/toggle",  requireSeller, intCtrl.toggle);
+router.put   ("/pages/:pageId/integrations/:key/config",  requireSeller, intCtrl.updateConfig);
+
+// ── Reseñas ───────────────────────────────────────────────────
+router.post  ("/pages/:pageId/products/:productId/generate-reviews", requireSeller, revCtrl.generate);
+router.get   ("/pages/:pageId/products/:productId/reviews",          requireSeller, revCtrl.list);
+router.patch ("/pages/:pageId/reviews/:reviewId",                    requireSeller, revCtrl.patch);
+router.delete("/pages/:pageId/reviews/:reviewId",                    requireSeller, revCtrl.remove);
+
 // ── Legado: apunta a la primera página del vendedor ───────────
 router.get ("/config",                         requireSeller, storeController.getConfig);
 router.get ("/orders",                         requireSeller, storeController.getOrders);
@@ -31,5 +44,7 @@ router.post("/public/:slug/order",                 storeController.createPublicO
 router.post("/public/:slug/checkout",              storeController.createCheckout);
 router.get ("/public/:slug/shipping/rates",        storeController.getShippingRates);
 router.get ("/public/:slug/shipping/agencies",     storeController.getShippingAgencies);
+router.get ("/public/:slug/transport-companies",   storeController.getTransportCompanies);
+router.get ("/public/:slug/products/:productId/reviews", revCtrl.publicList);
 
 export default router;

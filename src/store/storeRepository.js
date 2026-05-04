@@ -43,7 +43,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config }) {
+export async function updatePage(pageId, sellerId, { slug, page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -52,28 +52,30 @@ export async function updatePage(pageId, sellerId, { page_name, store_name, stor
          store_description   = COALESCE($3,  store_description),
          banner_color        = COALESCE($4,  banner_color),
          pct_markup          = COALESCE($5,  pct_markup),
-         tagline             = $8,
-         whatsapp            = $9,
-         instagram           = $10,
-         facebook            = $11,
-         logo_url            = $12,
-         font_family         = $13,
-         color_secondary     = $14,
-         color_bg            = $15,
-         color_text          = $16,
-         featured_categories = $17,
-         card_border_radius  = COALESCE($18, card_border_radius),
-         card_show_shadow    = COALESCE($19, card_show_shadow),
-         hero_headline       = $20,
-         hero_image_url      = $21,
-         promo_text          = $22,
-         show_promo_bar      = COALESCE($23, show_promo_bar),
-         theme_config        = COALESCE($24::jsonb, theme_config),
+         slug                = COALESCE($8,  slug),
+         tagline             = $9,
+         whatsapp            = $10,
+         instagram           = $11,
+         facebook            = $12,
+         logo_url            = $13,
+         font_family         = $14,
+         color_secondary     = $15,
+         color_bg            = $16,
+         color_text          = $17,
+         featured_categories = $18,
+         card_border_radius  = COALESCE($19, card_border_radius),
+         card_show_shadow    = COALESCE($20, card_show_shadow),
+         hero_headline       = $21,
+         hero_image_url      = $22,
+         promo_text          = $23,
+         show_promo_bar      = COALESCE($24, show_promo_bar),
+         theme_config        = COALESCE($25::jsonb, theme_config),
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
     [page_name, store_name, store_description, banner_color, pct_markup,
      pageId, sellerId,
+     slug || null,
      e(tagline), e(whatsapp), e(instagram), e(facebook),
      e(logo_url), e(font_family), e(color_secondary), e(color_bg), e(color_text),
      featured_categories ?? null,
@@ -96,6 +98,13 @@ export async function deletePage(pageId, sellerId) {
 
 export async function getCategories() {
   const { rows } = await pool.query(`SELECT id, name FROM categories ORDER BY name ASC`);
+  return rows;
+}
+
+export async function getTransportCompanies() {
+  const { rows } = await pool.query(
+    `SELECT id, razon_social AS name FROM transportes ORDER BY razon_social ASC`
+  );
   return rows;
 }
 

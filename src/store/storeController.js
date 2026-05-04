@@ -138,6 +138,13 @@ export async function customizePageProduct(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+export async function getTransportCompanies(req, res) {
+  try {
+    const repo = await import("./storeRepository.js");
+    return res.json(await repo.getTransportCompanies());
+  } catch (err) { handleError(res, err); }
+}
+
 export async function getShippingRates(req, res) {
   try {
     const cp = req.query.cp || req.query.postal_code || "";
