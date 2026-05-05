@@ -4,6 +4,7 @@ import * as authRepository   from "../auth/authRepository.js";
 import * as shippingService  from "../shipping/shippingService.js";
 import { signKeys }          from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 async function notifySellerNewOrder(sellerId, order, items) {
   try {
@@ -67,12 +68,6 @@ async function notifySellerNewOrder(sellerId, order, items) {
   }
 }
 
-function getPctGanancia(total) {
-  if (total >= 1000000) return 0.60;
-  if (total >= 500000)  return 0.50;
-  if (total >= 100000)  return 0.45;
-  return 0.40;
-}
 
 // ── Pages ─────────────────────────────────────────────────────
 
@@ -145,26 +140,27 @@ export async function getConfig(sellerId) {
 export async function getOrders(sellerId) {
   const orders = await storeRepository.getOrders(sellerId);
 
-  const cotizacion = await storeRepository.getCotizacion();
+  const [cotizacion, totalSales] = await Promise.all([
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(sellerId),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
+
   const withGanancia = await Promise.all(orders.map(async (order) => {
-    let ganancia_bruta = 0;
+    let ganancia_vendedor = 0;
 
     for (const item of order.items) {
       if (!item.product_id) continue;
       const costUsd    = await storeRepository.getCostUsdForProduct(item.product_id);
-      const base120    = costUsd * cotizacion * 1.20;
-      const diferencia = Number(item.unit_price) - base120;
-      if (diferencia > 0) ganancia_bruta += diferencia * item.quantity;
+      const shownCost  = calcShownCost(costUsd, cotizacion, platformPct);
+      const diferencia = Number(item.unit_price) - shownCost;
+      if (diferencia > 0) ganancia_vendedor += diferencia * item.quantity;
     }
-
-    const total        = Number(order.total);
-    const pct_ganancia = getPctGanancia(total);
 
     return {
       ...order,
-      ganancia_bruta,
-      pct_ganancia,
-      ganancia_vendedor: ganancia_bruta * pct_ganancia,
+      ganancia_vendedor,
+      platform_margin_pct: platformPct,
     };
   }));
 
@@ -183,8 +179,11 @@ export async function getPublicStore(slug) {
     storeRepository.getDiscountConfig(page.id),
     storeRepository.getAllDiscountTiers(page.id),
   ]);
+  const sellerTotalSales = await storeRepository.getSellerTotalSales(page.seller_id);
+  const platformPct      = getSellerPlatformPct(sellerTotalSales);
+
   const productsWithPrice = await Promise.all(products.map(async p => {
-    const precio_1    = p.costo_usd ? Number(p.costo_usd) * cotizacion * 1.44 : null;
+    const precio_1     = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct) : null;
     const precio_venta = p.custom_price ? Number(p.custom_price) : precio_1;
     return {
       ...p,
@@ -307,12 +306,16 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
 
-  const cotizacion = await storeRepository.getCotizacion();
-  const costUsd    = await storeRepository.getCostUsdForProduct(productId);
-  const precio1    = costUsd * cotizacion * 1.44;
+  const [cotizacion, totalSales, costUsd] = await Promise.all([
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(sellerId),
+    storeRepository.getCostUsdForProduct(productId),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
+  const precio1     = calcShownCost(costUsd, cotizacion, platformPct);
 
   if (precio1 > 0 && Number(customPrice) < precio1 - 0.01)
-    throw { status: 400, message: `El precio mínimo para este producto es $${precio1.toFixed(2)}` };
+    throw { status: 400, message: `El precio mínimo para este producto es $${Math.ceil(precio1)}` };
 
   await storeRepository.setProductPrice(pageId, productId, Number(customPrice));
   return { message: "Precio actualizado", precio_1: precio1 };

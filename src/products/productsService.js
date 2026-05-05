@@ -1,7 +1,8 @@
 // src/modules/products/productsService.js
 import * as productsRepository from "./productsRepository.js";
-import { getCotizacion, getPageById } from "../store/storeRepository.js";
+import { getCotizacion, getPageById, getSellerTotalSales } from "../store/storeRepository.js";
 import { signKeys } from "../utils/s3Client.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 export async function getProducts(pageId, sellerId, filters) {
   const hasFilters = filters.search || filters.categoryId || filters.onlyMine;
@@ -10,16 +11,19 @@ export async function getProducts(pageId, sellerId, filters) {
     : Math.min(Number(filters.limit) || 50, 50);
   const offset = Number(filters.offset) || 0;
 
-  const [{ rows, total }, cotizacion] = await Promise.all([
+  const [{ rows, total }, cotizacion, totalSales] = await Promise.all([
     productsRepository.findAll({ pageId, sellerId, ...filters, limit, offset }),
     getCotizacion(),
+    getSellerTotalSales(sellerId),
   ]);
+  const platformPct = getSellerPlatformPct(totalSales);
 
   const products = await Promise.all(rows.map(async p => {
-    const precio_1 = p.costo_usd ? Number(p.costo_usd) * cotizacion * 1.44 : null;
+    const precio_1 = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct) : null;
     return {
       ...p,
       precio_1,
+      platform_margin_pct: platformPct,
       custom_price:  p.custom_price ? Number(p.custom_price) : null,
       system_images: await signKeys(p.system_images || []),
       seller_images: await signKeys(p.seller_images || []),

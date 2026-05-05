@@ -7,6 +7,14 @@ export async function getCotizacion() {
   return Number(rows[0]?.cotizacion_dolar || 1);
 }
 
+export async function getSellerTotalSales(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(total), 0) AS total FROM web_orders WHERE seller_id = $1`,
+    [sellerId]
+  );
+  return Number(rows[0]?.total || 0);
+}
+
 // ── Pages ─────────────────────────────────────────────────────
 
 export async function getPages(sellerId) {
