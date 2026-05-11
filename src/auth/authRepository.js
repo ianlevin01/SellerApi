@@ -1,6 +1,10 @@
 
 import pool from "../database/db.js"
 
+async function ensureAvatarColumn() {
+  await pool.query("ALTER TABLE sellers ADD COLUMN IF NOT EXISTS avatar_key text");
+}
+
 export async function findSellerByEmail(email) {
   const { rows } = await pool.query(
     `SELECT s.*, sp.slug, sp.store_name, sp.pct_markup
@@ -13,9 +17,10 @@ export async function findSellerByEmail(email) {
 }
 
 export async function findSellerById(id) {
+  await ensureAvatarColumn();
   const { rows } = await pool.query(
     `SELECT s.id, s.email, s.name, s.phone, s.phone_verified,
-            s.city, s.age, s.how_found_us,
+            s.city, s.age, s.how_found_us, s.avatar_key,
             sp.slug, sp.store_name, sp.store_description,
             sp.banner_color, sp.logo_key, sp.pct_markup
      FROM sellers s
@@ -27,6 +32,7 @@ export async function findSellerById(id) {
 }
 
 export async function updateProfile(id, { name, phone, city, age, how_found_us }) {
+  await ensureAvatarColumn();
   const { rows } = await pool.query(
     `UPDATE sellers
      SET name         = COALESCE($1, name),
@@ -35,7 +41,7 @@ export async function updateProfile(id, { name, phone, city, age, how_found_us }
          age          = COALESCE($4, age),
          how_found_us = COALESCE($5, how_found_us)
      WHERE id = $6
-     RETURNING id, email, name, phone, phone_verified, city, age, how_found_us`,
+     RETURNING id, email, name, phone, phone_verified, city, age, how_found_us, avatar_key`,
     [name ?? null, phone ?? null, city ?? null, age ?? null, how_found_us ?? null, id]
   );
   return rows[0];
@@ -126,4 +132,17 @@ export async function verifySellerToken(token) {
     [token]
   );
   return rows[0] || null;
+}
+
+
+export async function updateAvatarKey(id, avatarKey) {
+  await ensureAvatarColumn();
+  const { rows } = await pool.query(
+    `UPDATE sellers
+     SET avatar_key = $1
+     WHERE id = $2
+     RETURNING id, email, name, phone, phone_verified, city, age, how_found_us, avatar_key`,
+    [avatarKey, id]
+  );
+  return rows[0];
 }

@@ -4,9 +4,85 @@ import * as authRepository         from "../auth/authRepository.js";
 import * as shippingService        from "../shipping/shippingService.js";
 import * as combosService          from "../combos/combosService.js";
 import * as integrationsRepository from "../integrations/integrationsRepository.js";
-import { signKeys }                from "../utils/s3Client.js";
+import { signKey, signKeys }       from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
 import { getSellerPlatformPct, calcShownCost, calcSavingsVsBase, getNextTierInfo } from "../utils/pricing.js";
+
+
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function extractS3Key(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  // Si ya es una key de S3, la dejamos igual.
+  if (!isHttpUrl(raw)) return raw;
+
+  try {
+    const parsed = new URL(raw);
+    const bucket = process.env.AWS_BUCKET || process.env.S3_BUCKET;
+    const host = parsed.hostname;
+    const pathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+
+    // Virtual-hosted style:
+    // https://bucket.s3.sa-east-1.amazonaws.com/sellers/...
+    if (bucket && (
+      host === `${bucket}.s3.amazonaws.com` ||
+      host.startsWith(`${bucket}.s3.`)
+    )) {
+      return pathname;
+    }
+
+    // Path-style:
+    // https://s3.sa-east-1.amazonaws.com/bucket/sellers/...
+    if (bucket && host.startsWith("s3.") && pathname.startsWith(`${bucket}/`)) {
+      return pathname.slice(bucket.length + 1);
+    }
+
+    // URL externa: se conserva como URL.
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
+function normalizeStoreAssetValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const extracted = extractS3Key(raw);
+
+  // URLs externas quedan como URL.
+  if (isHttpUrl(extracted)) return extracted;
+
+  // Keys de S3 se guardan como key estable.
+  return extracted;
+}
+
+async function resolveStoreAssetUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const extracted = extractS3Key(raw);
+
+  // URLs externas quedan como URL.
+  if (isHttpUrl(extracted)) return extracted;
+
+  // Keys de S3 se firman cada vez que se leen.
+  return await signKey(extracted) || raw;
+}
+
+async function withResolvedPageAssets(page) {
+  if (!page) return page;
+  return {
+    ...page,
+    logo_url:       await resolveStoreAssetUrl(page.logo_url),
+    hero_image_url: await resolveStoreAssetUrl(page.hero_image_url),
+  };
+}
+
 
 async function notifySellerNewOrder(sellerId, order, items) {
   try {
@@ -97,7 +173,7 @@ export async function createPage(sellerId, body) {
 export async function getPageConfig(pageId, sellerId) {
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
-  return page;
+  return await withResolvedPageAssets(page);
 }
 
 export async function updatePageConfig(pageId, sellerId, body) {
@@ -114,13 +190,16 @@ export async function updatePageConfig(pageId, sellerId, body) {
   const updated = await storeRepository.updatePage(pageId, sellerId, {
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
-    logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
+    logo_url: normalizeStoreAssetValue(logo_url),
+    font_family, color_secondary, color_bg, color_text, featured_categories,
     card_border_radius, card_show_shadow,
-    hero_headline, hero_image_url, promo_text, show_promo_bar,
+    hero_headline,
+    hero_image_url: normalizeStoreAssetValue(hero_image_url),
+    promo_text, show_promo_bar,
     theme_config, costo_envio,
   });
   if (!updated) throw { status: 404, message: "Página no encontrada" };
-  return updated;
+  return await withResolvedPageAssets(updated);
 }
 
 export async function deletePage(pageId, sellerId) {
@@ -134,7 +213,7 @@ export async function deletePage(pageId, sellerId) {
 export async function getConfig(sellerId) {
   const config = await storeRepository.getConfig(sellerId);
   if (!config) throw { status: 404, message: "Configuración no encontrada" };
-  return config;
+  return await withResolvedPageAssets(config);
 }
 
 // ── Pedidos con ganancia ──────────────────────────────────────
@@ -202,7 +281,8 @@ export async function getPublicStore(slug) {
     price_tiers:      allTiers.filter(t => t.discount_type === "price"),
   };
 
-  return { page, products: productsWithPrice, discount, combos, integrations: integrationConfigs };
+  const publicPage = await withResolvedPageAssets(page);
+  return { page: publicPage, products: productsWithPrice, discount, combos, integrations: integrationConfigs };
 }
 
 // ── Descuentos progresivos ────────────────────────────────────

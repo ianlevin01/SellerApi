@@ -6,6 +6,8 @@ import twilio     from "twilio";
 import * as authRepository from "./authRepository.js";
 import { firebaseAuth } from "../config/firebase.js";
 import { transporter } from "../config/mailer.js";
+import { signKey } from "../utils/s3Client.js";
+import { uploadStoreAsset } from "../images/imagesService.js";
 
 const twilioClient = process.env.TWILIO_ACCOUNT_SID
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -39,6 +41,14 @@ function buildSlug(name, id) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 50) + "-" + id.slice(0, 6);
+}
+
+async function withAvatarUrl(seller) {
+  if (!seller) return seller;
+  return {
+    ...seller,
+    avatar_url: seller.avatar_key ? await signKey(seller.avatar_key) : "",
+  };
 }
 
 function signToken(seller) {
@@ -108,13 +118,23 @@ export async function login({ email, password }) {
 export async function getMe(sellerId) {
   const seller = await authRepository.findSellerById(sellerId);
   if (!seller) throw { status: 404, message: "No encontrado" };
-  return seller;
+  return await withAvatarUrl(seller);
 }
 
 export async function updateProfile(sellerId, data) {
   const seller = await authRepository.updateProfile(sellerId, data);
   if (!seller) throw { status: 404, message: "No encontrado" };
-  return seller;
+  return await withAvatarUrl(seller);
+}
+
+export async function uploadAvatar(sellerId, file) {
+  const uploaded = await uploadStoreAsset(sellerId, "avatar", file);
+  const seller = await authRepository.updateAvatarKey(sellerId, uploaded.key);
+  if (!seller) throw { status: 404, message: "No encontrado" };
+  return {
+    ...(await withAvatarUrl(seller)),
+    avatar_url: uploaded.url,
+  };
 }
 
 export async function requestOtp(sellerId) {

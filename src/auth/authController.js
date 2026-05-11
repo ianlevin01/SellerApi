@@ -73,3 +73,12 @@ export async function googleLogin(req, res) {
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
+
+
+export async function uploadAvatar(req, res) {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No se recibió imagen" });
+    const result = await authService.uploadAvatar(req.seller.id, req.file);
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}

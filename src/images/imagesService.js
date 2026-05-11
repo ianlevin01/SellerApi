@@ -55,7 +55,8 @@ export async function uploadDescriptionMedia(sellerId, productId, file) {
 
 
 // Generic store asset upload (logo, hero, favicon, etc.) — no DB entry.
-// The returned URL can be saved in seller_pages.logo_url / hero_image_url from the frontend.
+// Devuelve key + URL firmada para preview. Al guardar la tienda,
+// storeService normaliza cualquier URL de S3 a key y la vuelve a firmar al leerla.
 export async function uploadStoreAsset(sellerId, assetType, file) {
   if (!file) throw { status: 400, message: "No se recibió imagen" };
 
@@ -85,7 +86,7 @@ export async function uploadStoreAsset(sellerId, assetType, file) {
     ContentType: file.mimetype,
   }));
 
-  const url = publicS3Url(key);
+  const url = await signKey(key);
   return { key, url };
 }
 
