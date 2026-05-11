@@ -116,6 +116,14 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
 }
 
 
+export async function getSellerTotalSales(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(total), 0) AS total FROM web_orders WHERE seller_id = $1`,
+    [sellerId]
+  );
+  return Number(rows[0]?.total || 0);
+}
+
 export async function updateOrderStatus(orderId, status, mpPaymentId) {
   await pool.query(
     `UPDATE web_orders SET color = $1, mp_payment_id = $2 WHERE id = $3`,

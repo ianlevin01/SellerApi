@@ -4,6 +4,7 @@ import * as repo               from "./purchaseRepository.js";
 import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -15,9 +16,7 @@ const mp = new MercadoPagoConfig({
  * Aplica markup del revendedor y descuentos por precio/cantidad.
  * Devuelve { enrichedItems, subtotal, discountTotal, total }
  */
-function buildPricedItems({ products, items, markup, discountConfig, discountTiers, cotizacion }) {
-  const MARKUP_MINIMO = 1.44; // 144% sobre costo_usd
-
+function buildPricedItems({ products, items, discountConfig, discountTiers, cotizacion, platformPct }) {
   let enrichedItems = [];
   let subtotal = 0;
 
@@ -25,9 +24,8 @@ function buildPricedItems({ products, items, markup, discountConfig, discountTie
     const product = products.find(p => p.id === item.product_id);
     if (!product) continue;
 
-    // Precio base = costo_usd * cotizacion * 1.44 (piso mínimo)
-    const costoEnPesos = Number(product.costo_usd) * Number(cotizacion);
-    const precioBase   = costoEnPesos * MARKUP_MINIMO;
+    // Precio base = mismo cálculo que usa el store al mostrar precio_1
+    const precioBase = calcShownCost(product.costo_usd, cotizacion, platformPct);
 
     // Precio de venta: el que fijó el revendedor, o el mínimo si no fijó nada
     const precioConMarkup = product.custom_price
@@ -105,8 +103,12 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     throw err;
   }
 
-  // 2. Cotización del dólar (negocio fijo del sistema)
-  const cotizacion = await repo.getCotizacionDolar();
+  // 2. Cotización del dólar + tier del vendedor (en paralelo)
+  const [cotizacion, totalSales] = await Promise.all([
+    repo.getCotizacionDolar(),
+    repo.getSellerTotalSales(page.seller_id),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
 
   // 3. Productos
   const products = await repo.getProductsByIds(
@@ -124,13 +126,14 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   const discountConfig = await repo.getSellerDiscountConfig(page.id);
   const discountTiers  = await repo.getSellerDiscountTiers(page.id);
 
-  // 5. Calcular precios de productos
+  // 5. Calcular precios de productos (misma fórmula que el store)
   const { enrichedItems, total: productsTotal } = buildPricedItems({
     products,
     items,
     discountConfig,
     discountTiers,
     cotizacion,
+    platformPct,
   });
 
   // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo
