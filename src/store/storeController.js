@@ -33,13 +33,6 @@ export async function getPublicStore(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
-export async function getMediaAsset(req, res) {
-  try {
-    const url = await storeService.getMediaAssetUrl(req.query.key);
-    return res.redirect(302, url);
-  } catch (err) { handleError(res, err); }
-}
-
 export async function createPublicOrder(req, res) {
   try {
     const result = await storeService.createPublicOrder(req.params.slug, req.body);

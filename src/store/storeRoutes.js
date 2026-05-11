@@ -43,7 +43,6 @@ router.get ("/orders",                         requireSeller, storeController.ge
 router.get ("/my-tier",                        requireSeller, storeController.getMyTierInfo);
 
 // ── Públicas (tienda visible para compradores) ────────────────
-router.get ("/media",                           storeController.getMediaAsset);
 router.get ("/public/:slug",                       storeController.getPublicStore);
 router.post("/public/:slug/order",                 storeController.createPublicOrder);
 router.post("/public/:slug/checkout",              storeController.createCheckout);

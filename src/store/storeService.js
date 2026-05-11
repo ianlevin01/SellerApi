@@ -70,8 +70,11 @@ async function resolveStoreAssetUrl(value) {
   // URLs externas quedan como URL.
   if (isHttpUrl(extracted)) return extracted;
 
+  // Si quedó guardado solo un nombre tipo "177.png", no lo devolvemos como URL local rota.
+  if (!extracted.includes("/")) return "";
+
   // Keys de S3 se firman cada vez que se leen.
-  return await signKey(extracted) || raw;
+  return await signKey(extracted) || "";
 }
 
 async function withResolvedPageAssets(page) {
@@ -434,21 +437,4 @@ export async function createPublicOrder(slug, { customer, items, total }) {
   notifySellerNewOrder(page.seller_id, { ...order, total }, items);
 
   return { message: "Pedido recibido", numero: order.numero };
-}
-
-
-export async function getMediaAssetUrl(key) {
-  const cleanKey = String(key || "").trim();
-
-  if (!cleanKey) throw { status: 400, message: "key requerido" };
-  if (/^https?:\/\//i.test(cleanKey)) return cleanKey;
-
-  // Seguridad mínima: no permitir path traversal ni keys raras.
-  if (cleanKey.includes("..") || cleanKey.startsWith("/") || cleanKey.includes("\\")) {
-    throw { status: 400, message: "key inválido" };
-  }
-
-  const url = await signKey(cleanKey);
-  if (!url) throw { status: 404, message: "Imagen no encontrada" };
-  return url;
 }
