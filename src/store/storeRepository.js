@@ -220,6 +220,14 @@ export async function setProductPrice(pageId, productId, customPrice) {
   return rows[0];
 }
 
+export async function getSellerProduct(pageId, productId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM seller_products WHERE page_id = $1 AND product_id = $2`,
+    [pageId, productId]
+  );
+  return rows[0] || null;
+}
+
 export async function updateProductPromo(pageId, productId, promoPrice, promoEnabled) {
   const { rows } = await pool.query(
     `UPDATE seller_products SET promo_price = $1, promo_enabled = $2

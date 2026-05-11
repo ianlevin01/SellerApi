@@ -409,8 +409,28 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
 export async function setProductPromo(pageId, sellerId, productId, promoPrice, promoEnabled) {
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
-  if (promoEnabled && (!promoPrice || Number(promoPrice) <= 0))
-    throw { status: 400, message: "El precio promocional debe ser mayor a 0" };
+
+  if (promoEnabled) {
+    if (!promoPrice || Number(promoPrice) <= 0)
+      throw { status: 400, message: "El precio promocional debe ser mayor a 0" };
+
+    const [cotizacion, totalSales, costUsd, sellerProduct] = await Promise.all([
+      storeRepository.getCotizacion(),
+      storeRepository.getSellerTotalSales(sellerId),
+      storeRepository.getCostUsdForProduct(productId),
+      storeRepository.getSellerProduct(pageId, productId),
+    ]);
+    const platformPct = getSellerPlatformPct(totalSales);
+    const precio1 = calcShownCost(costUsd, cotizacion, platformPct);
+
+    if (precio1 > 0 && Number(promoPrice) < precio1 - 0.01)
+      throw { status: 400, message: `El precio promo mínimo es $${Math.ceil(precio1)}` };
+
+    const salePrice = sellerProduct?.custom_price;
+    if (salePrice && Number(promoPrice) >= Number(salePrice) - 0.01)
+      throw { status: 400, message: "El precio promo debe ser menor al precio de venta" };
+  }
+
   await storeRepository.updateProductPromo(pageId, productId, promoEnabled ? Number(promoPrice) : null, Boolean(promoEnabled));
   return { message: "Promoción actualizada" };
 }
