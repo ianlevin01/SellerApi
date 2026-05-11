@@ -31,7 +31,8 @@ export async function getProductsByIds(ids, pageId) {
        p.id, p.name,
        (SELECT pc.cost FROM product_costs pc
         WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
-       sp.custom_price
+       sp.custom_price,
+       COALESCE(sp.free_shipping, false) AS free_shipping
      FROM products p
      JOIN seller_products sp ON sp.product_id = p.id
      WHERE p.id = ANY($1) AND sp.page_id = $2`,
@@ -60,7 +61,7 @@ export async function getSellerDiscountTiers(pageId) {
 
 // ─── Crear orden ─────────────────────────────────────────────────────────────
 
-export async function createWebOrder({ customer, items, total, seller_id, shipping_amount = 0 }) {
+export async function createWebOrder({ customer, items, total, seller_id, shipping_amount = 0, free_shipping_absorbed = 0 }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -68,8 +69,8 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
     const { rows } = await client.query(
       `
       INSERT INTO web_orders
-        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
       `,
       [
@@ -81,6 +82,7 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
         total,
         seller_id,
         shipping_amount,
+        free_shipping_absorbed,
       ]
     );
 

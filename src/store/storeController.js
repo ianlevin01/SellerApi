@@ -21,6 +21,12 @@ export async function getOrders(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+export async function getMyTierInfo(req, res) {
+  try {
+    return res.json(await storeService.getMyTierInfo(req.seller.id));
+  } catch (err) { handleError(res, err); }
+}
+
 export async function getPublicStore(req, res) {
   try {
     return res.json(await storeService.getPublicStore(req.params.slug));
@@ -95,6 +101,13 @@ export async function deletePage(req, res) {
 }
 
 // ── Per-page products ─────────────────────────────────────────
+
+export async function getPageProduct(req, res) {
+  try {
+    const result = await productsService.getProduct(req.params.pageId, req.seller.id, req.params.productId);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
 
 export async function getPageProducts(req, res) {
   try {

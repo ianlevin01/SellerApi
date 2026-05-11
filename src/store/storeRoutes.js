@@ -4,6 +4,7 @@ import requireSeller from "../middleware/requireSeller.js";
 import * as storeController from "./storeController.js";
 import * as intCtrl  from "../integrations/integrationsController.js";
 import * as revCtrl  from "../reviews/reviewsController.js";
+import combosRoutes  from "../combos/combosRoutes.js";
 
 const router = Router();
 
@@ -18,10 +19,12 @@ router.get ("/pages/:pageId/discounts",             requireSeller, storeControll
 router.put ("/pages/:pageId/discounts",             requireSeller, storeController.updateDiscounts);
 router.get ("/pages/:pageId/products",              requireSeller, storeController.getPageProducts);
 router.post("/pages/:pageId/products/add-all",      requireSeller, storeController.addAllPageProducts);
+router.get ("/pages/:pageId/products/:productId",   requireSeller, storeController.getPageProduct);
 router.post("/pages/:pageId/products/:productId",   requireSeller, storeController.addPageProduct);
 router.delete("/pages/:pageId/products/:productId", requireSeller, storeController.removePageProduct);
 router.patch("/pages/:pageId/products/:productId/customize", requireSeller, storeController.customizePageProduct);
 router.patch("/pages/:pageId/products/:productId/price",    requireSeller, storeController.setProductPrice);
+router.use("/pages/:pageId/combos", requireSeller, combosRoutes);
 
 // ── Integraciones ─────────────────────────────────────────────
 router.get   ("/pages/:pageId/integrations",              requireSeller, intCtrl.list);
@@ -37,6 +40,7 @@ router.delete("/pages/:pageId/reviews/:reviewId",                    requireSell
 // ── Legado: apunta a la primera página del vendedor ───────────
 router.get ("/config",                         requireSeller, storeController.getConfig);
 router.get ("/orders",                         requireSeller, storeController.getOrders);
+router.get ("/my-tier",                        requireSeller, storeController.getMyTierInfo);
 
 // ── Públicas (tienda visible para compradores) ────────────────
 router.get ("/public/:slug",                       storeController.getPublicStore);

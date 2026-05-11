@@ -130,9 +130,10 @@ export async function calculateEarningForOrder(webOrderId) {
     if (diferencia > 0) ganancia_bruta += diferencia * item.quantity;
   }
 
-  const total          = Number(order.total);
-  const pct_ganancia   = getPctGanancia(total);
-  const ganancia_vendedor = ganancia_bruta * pct_ganancia;
+  const total                = Number(order.total);
+  const pct_ganancia         = getPctGanancia(total);
+  const freeShippingAbsorbed = Number(order.free_shipping_absorbed || 0);
+  const ganancia_vendedor    = ganancia_bruta * pct_ganancia - freeShippingAbsorbed;
 
   return Math.max(0, Number(ganancia_vendedor.toFixed(2)));
 }

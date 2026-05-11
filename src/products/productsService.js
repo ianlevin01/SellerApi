@@ -4,11 +4,27 @@ import { getCotizacion, getPageById, getSellerTotalSales } from "../store/storeR
 import { signKeys } from "../utils/s3Client.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
+export async function getProduct(pageId, sellerId, productId) {
+  const [row, cotizacion, totalSales] = await Promise.all([
+    productsRepository.findById(pageId, sellerId, productId),
+    getCotizacion(),
+    getSellerTotalSales(sellerId),
+  ]);
+  if (!row) throw { status: 404, message: "Producto no encontrado" };
+  const platformPct = getSellerPlatformPct(totalSales);
+  return {
+    ...row,
+    precio_1:           row.costo_usd ? calcShownCost(row.costo_usd, cotizacion, platformPct) : null,
+    platform_margin_pct: platformPct,
+    custom_price:        row.custom_price ? Number(row.custom_price) : null,
+    system_images:       await signKeys(row.system_images || []),
+    seller_images:       await signKeys(row.seller_images || []),
+  };
+}
+
 export async function getProducts(pageId, sellerId, filters) {
+  const limit  = Math.min(Number(filters.limit) || 20, 500);
   const hasFilters = filters.search || filters.categoryId || filters.onlyMine;
-  const limit  = hasFilters
-    ? Math.min(Number(filters.limit) || 2000, 2000)
-    : Math.min(Number(filters.limit) || 50, 50);
   const offset = Number(filters.offset) || 0;
 
   const [{ rows, total }, cotizacion, totalSales] = await Promise.all([

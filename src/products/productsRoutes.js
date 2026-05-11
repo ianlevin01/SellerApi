@@ -9,6 +9,7 @@ router.use(requireSeller);
 
 // add-all debe ir ANTES de /:productId para que Express no lo interprete como un id
 router.get   ("/",                      productsController.getProducts);
+router.get   ("/:productId",            productsController.getProduct);
 router.post  ("/add-all",               productsController.addAllProducts);
 router.patch ("/:productId/customize",  productsController.customizeProduct);
 router.post  ("/:productId",            productsController.addProduct);

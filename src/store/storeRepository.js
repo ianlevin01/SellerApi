@@ -51,7 +51,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { slug, page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config }) {
+export async function updatePage(pageId, sellerId, { slug, page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config, costo_envio }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -78,6 +78,7 @@ export async function updatePage(pageId, sellerId, { slug, page_name, store_name
          promo_text          = $23,
          show_promo_bar      = COALESCE($24, show_promo_bar),
          theme_config        = COALESCE($25::jsonb, theme_config),
+         costo_envio         = COALESCE($26, costo_envio),
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
@@ -91,7 +92,8 @@ export async function updatePage(pageId, sellerId, { slug, page_name, store_name
      card_show_shadow   != null ? Boolean(card_show_shadow)  : null,
      e(hero_headline), e(hero_image_url), e(promo_text),
      show_promo_bar != null ? Boolean(show_promo_bar) : null,
-     theme_config != null ? JSON.stringify(theme_config) : null]
+     theme_config != null ? JSON.stringify(theme_config) : null,
+     costo_envio != null ? Number(costo_envio) : null]
   );
   return rows[0];
 }
@@ -193,7 +195,8 @@ export async function getPublicProducts(pageId, sellerId) {
          '[]'
        ) AS images,
        spc.custom_name,
-       spc.custom_desc
+       spc.custom_desc,
+       COALESCE(spc.free_shipping, false) AS free_shipping
      FROM seller_products spc
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id

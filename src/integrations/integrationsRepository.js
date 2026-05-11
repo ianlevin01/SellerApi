@@ -49,3 +49,17 @@ export async function isActive(pageId, key) {
   );
   return rows.length > 0;
 }
+
+// Returns a flat map { key: config } for all active integrations of a page
+export async function getPublicConfigs(pageId) {
+  const { rows } = await pool.query(
+    `SELECT i.key, si.config
+     FROM seller_integrations si
+     JOIN integrations i ON i.id = si.integration_id
+     WHERE si.page_id = $1 AND si.active = true`,
+    [pageId]
+  );
+  const result = {};
+  for (const r of rows) result[r.key] = r.config || {};
+  return result;
+}

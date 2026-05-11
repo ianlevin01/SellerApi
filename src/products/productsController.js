@@ -7,6 +7,13 @@ function handleError(res, err) {
   return res.status(500).json({ message: "Error interno" });
 }
 
+export async function getProduct(req, res) {
+  try {
+    const result = await productsService.getProduct(null, req.seller.id, req.params.productId);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
 export async function getProducts(req, res) {
   try {
     const { search, category_id, only_mine, limit, offset } = req.query;

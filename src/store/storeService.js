@@ -1,10 +1,12 @@
 // src/modules/store/storeService.js
-import * as storeRepository  from "./storeRepository.js";
-import * as authRepository   from "../auth/authRepository.js";
-import * as shippingService  from "../shipping/shippingService.js";
-import { signKeys }          from "../utils/s3Client.js";
+import * as storeRepository        from "./storeRepository.js";
+import * as authRepository         from "../auth/authRepository.js";
+import * as shippingService        from "../shipping/shippingService.js";
+import * as combosService          from "../combos/combosService.js";
+import * as integrationsRepository from "../integrations/integrationsRepository.js";
+import { signKeys }                from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlatformPct, calcShownCost, calcSavingsVsBase, getNextTierInfo } from "../utils/pricing.js";
 
 async function notifySellerNewOrder(sellerId, order, items) {
   try {
@@ -107,7 +109,7 @@ export async function updatePageConfig(pageId, sellerId, body) {
     logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
     card_border_radius, card_show_shadow,
     hero_headline, hero_image_url, promo_text, show_promo_bar,
-    theme_config,
+    theme_config, costo_envio,
   } = body;
   const updated = await storeRepository.updatePage(pageId, sellerId, {
     page_name, store_name, store_description, banner_color, pct_markup,
@@ -115,7 +117,7 @@ export async function updatePageConfig(pageId, sellerId, body) {
     logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
     card_border_radius, card_show_shadow,
     hero_headline, hero_image_url, promo_text, show_promo_bar,
-    theme_config,
+    theme_config, costo_envio,
   });
   if (!updated) throw { status: 404, message: "Página no encontrada" };
   return updated;
@@ -148,6 +150,7 @@ export async function getOrders(sellerId) {
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
     let ganancia_vendedor = 0;
+    let ahorro_vendedor   = 0;
 
     for (const item of order.items) {
       if (!item.product_id) continue;
@@ -155,13 +158,10 @@ export async function getOrders(sellerId) {
       const shownCost  = calcShownCost(costUsd, cotizacion, platformPct);
       const diferencia = Number(item.unit_price) - shownCost;
       if (diferencia > 0) ganancia_vendedor += diferencia * item.quantity;
+      ahorro_vendedor += calcSavingsVsBase(costUsd, cotizacion, platformPct) * item.quantity;
     }
 
-    return {
-      ...order,
-      ganancia_vendedor,
-      platform_margin_pct: platformPct,
-    };
+    return { ...order, ganancia_vendedor, ahorro_vendedor };
   }));
 
   return withGanancia;
@@ -173,11 +173,13 @@ export async function getPublicStore(slug) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
-  const [products, cotizacion, discountConfig, allTiers] = await Promise.all([
+  const [products, cotizacion, discountConfig, allTiers, combos, integrationConfigs] = await Promise.all([
     storeRepository.getPublicProducts(page.id, page.seller_id),
     storeRepository.getCotizacion(),
     storeRepository.getDiscountConfig(page.id),
     storeRepository.getAllDiscountTiers(page.id),
+    combosService.getPublicCombos(page.id).catch(() => []),
+    integrationsRepository.getPublicConfigs(page.id).catch(() => ({})),
   ]);
   const sellerTotalSales = await storeRepository.getSellerTotalSales(page.seller_id);
   const platformPct      = getSellerPlatformPct(sellerTotalSales);
@@ -200,7 +202,7 @@ export async function getPublicStore(slug) {
     price_tiers:      allTiers.filter(t => t.discount_type === "price"),
   };
 
-  return { page, products: productsWithPrice, discount };
+  return { page, products: productsWithPrice, discount, combos, integrations: integrationConfigs };
 }
 
 // ── Descuentos progresivos ────────────────────────────────────
@@ -319,6 +321,21 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
 
   await storeRepository.setProductPrice(pageId, productId, Number(customPrice));
   return { message: "Precio actualizado", precio_1: precio1 };
+}
+
+export async function getMyTierInfo(sellerId) {
+  const [cotizacion, totalSales] = await Promise.all([
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(sellerId),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
+  const nextTier    = getNextTierInfo(totalSales, platformPct);
+  return {
+    totalSales,
+    isMaxTier:     !nextTier,
+    currentFactor: 1.20 * (1 + platformPct / 100),
+    ...(nextTier ?? {}),
+  };
 }
 
 export async function createPublicOrder(slug, { customer, items, total }) {

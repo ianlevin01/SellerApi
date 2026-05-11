@@ -126,6 +126,7 @@ export async function markPayoutTransferred(payoutId) {
 export async function getOrderForEarning(webOrderId) {
   const { rows } = await pool.query(
     `SELECT wo.id, wo.seller_id, wo.total,
+            COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
             COALESCE(
               (SELECT json_agg(json_build_object(
                 'product_id', woi.product_id,

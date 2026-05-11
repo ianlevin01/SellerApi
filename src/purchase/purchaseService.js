@@ -41,6 +41,7 @@ function buildPricedItems({ products, items, markup, discountConfig, discountTie
       unit_price_base:    precioBase,
       unit_price_markup:  precioConMarkup,
       unit_price_final:   precioConMarkup, // se ajusta abajo si hay descuento
+      free_shipping:      Boolean(product.free_shipping),
     });
 
     subtotal += precioConMarkup * item.quantity;
@@ -132,17 +133,22 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     cotizacion,
   });
 
-  // 6. Sumar costo de envío al total
-  const shippingAmount = shipping ? Number(shipping.amount || 0) : 0;
+  // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo
+  const allFreeShipping = enrichedItems.length > 0 && enrichedItems.every(i => i.free_shipping);
+  const costoEnvio      = Number(page.costo_envio || 0);
+  const freeShippingAbsorbed = allFreeShipping ? costoEnvio : 0;
+
+  const shippingAmount = allFreeShipping ? 0 : (shipping ? Number(shipping.amount || 0) : 0);
   const total          = productsTotal + shippingAmount;
 
   // 7. Crear la orden en la BD (estado pendiente hasta que MP confirme)
   const order = await repo.createWebOrder({
     customer,
-    items:           enrichedItems,
+    items:                  enrichedItems,
     total,
-    seller_id:       page.seller_id,
-    shipping_amount: shippingAmount,
+    seller_id:              page.seller_id,
+    shipping_amount:        shippingAmount,
+    free_shipping_absorbed: freeShippingAbsorbed,
   });
 
   // 8. Guardar detalle de envío y registrar en MiCorreo (en background, no bloquea)
