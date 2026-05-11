@@ -435,3 +435,20 @@ export async function createPublicOrder(slug, { customer, items, total }) {
 
   return { message: "Pedido recibido", numero: order.numero };
 }
+
+
+export async function getMediaAssetUrl(key) {
+  const cleanKey = String(key || "").trim();
+
+  if (!cleanKey) throw { status: 400, message: "key requerido" };
+  if (/^https?:\/\//i.test(cleanKey)) return cleanKey;
+
+  // Seguridad mínima: no permitir path traversal ni keys raras.
+  if (cleanKey.includes("..") || cleanKey.startsWith("/") || cleanKey.includes("\\")) {
+    throw { status: 400, message: "key inválido" };
+  }
+
+  const url = await signKey(cleanKey);
+  if (!url) throw { status: 404, message: "Imagen no encontrada" };
+  return url;
+}
