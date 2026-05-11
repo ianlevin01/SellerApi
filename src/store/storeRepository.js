@@ -196,7 +196,9 @@ export async function getPublicProducts(pageId, sellerId) {
        ) AS images,
        spc.custom_name,
        spc.custom_desc,
-       COALESCE(spc.free_shipping, false) AS free_shipping
+       COALESCE(spc.free_shipping, false) AS free_shipping,
+       spc.promo_price,
+       COALESCE(spc.promo_enabled, false) AS promo_enabled
      FROM seller_products spc
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id
@@ -214,6 +216,16 @@ export async function setProductPrice(pageId, productId, customPrice) {
      WHERE page_id = $2 AND product_id = $3
      RETURNING *`,
     [customPrice, pageId, productId]
+  );
+  return rows[0];
+}
+
+export async function updateProductPromo(pageId, productId, promoPrice, promoEnabled) {
+  const { rows } = await pool.query(
+    `UPDATE seller_products SET promo_price = $1, promo_enabled = $2
+     WHERE page_id = $3 AND product_id = $4
+     RETURNING *`,
+    [promoPrice, promoEnabled, pageId, productId]
   );
   return rows[0];
 }

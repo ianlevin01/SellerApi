@@ -406,6 +406,15 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
   return { message: "Precio actualizado", precio_1: precio1 };
 }
 
+export async function setProductPromo(pageId, sellerId, productId, promoPrice, promoEnabled) {
+  const page = await storeRepository.getPageById(pageId, sellerId);
+  if (!page) throw { status: 404, message: "Página no encontrada" };
+  if (promoEnabled && (!promoPrice || Number(promoPrice) <= 0))
+    throw { status: 400, message: "El precio promocional debe ser mayor a 0" };
+  await storeRepository.updateProductPromo(pageId, productId, promoEnabled ? Number(promoPrice) : null, Boolean(promoEnabled));
+  return { message: "Promoción actualizada" };
+}
+
 export async function getMyTierInfo(sellerId) {
   const [cotizacion, totalSales] = await Promise.all([
     storeRepository.getCotizacion(),

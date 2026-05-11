@@ -1,0 +1,3 @@
+ALTER TABLE seller_products
+  ADD COLUMN IF NOT EXISTS promo_price   NUMERIC,
+  ADD COLUMN IF NOT EXISTS promo_enabled BOOLEAN NOT NULL DEFAULT false;

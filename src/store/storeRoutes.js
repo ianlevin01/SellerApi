@@ -24,6 +24,7 @@ router.post("/pages/:pageId/products/:productId",   requireSeller, storeControll
 router.delete("/pages/:pageId/products/:productId", requireSeller, storeController.removePageProduct);
 router.patch("/pages/:pageId/products/:productId/customize", requireSeller, storeController.customizePageProduct);
 router.patch("/pages/:pageId/products/:productId/price",    requireSeller, storeController.setProductPrice);
+router.patch("/pages/:pageId/products/:productId/promo",    requireSeller, storeController.setProductPromo);
 router.use("/pages/:pageId/combos", requireSeller, combosRoutes);
 
 // ── Integraciones ─────────────────────────────────────────────

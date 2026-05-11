@@ -185,3 +185,14 @@ export async function setProductPrice(req, res) {
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
+
+export async function setProductPromo(req, res) {
+  try {
+    const { promo_price, promo_enabled } = req.body;
+    const result = await storeService.setProductPromo(
+      req.params.pageId, req.seller.id, req.params.productId,
+      promo_price, promo_enabled
+    );
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
