@@ -3,6 +3,15 @@ import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import s3, { BUCKET, signKey } from "../utils/s3Client.js";
 import * as imagesRepository from "./imagesRepository.js";
 
+function publicS3Url(key) {
+  const region = process.env.AWS_REGION || "sa-east-1";
+  const encodedKey = String(key)
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+  return `https://${BUCKET}.s3.${region}.amazonaws.com/${encodedKey}`;
+}
+
 export async function uploadImage(sellerId, productId, file, pageId = null) {
   if (!file) throw { status: 400, message: "No se recibió imagen" };
 
@@ -42,6 +51,46 @@ export async function uploadDescriptionMedia(sellerId, productId, file) {
 
   const url = await signKey(key);
   return { key, url };
+}
+
+
+// Generic store asset upload (logo, hero, favicon, etc.) — no DB entry.
+// The returned URL can be saved in seller_pages.logo_url / hero_image_url from the frontend.
+export async function uploadStoreAsset(sellerId, assetType, file) {
+  if (!file) throw { status: 400, message: "No se recibió imagen" };
+
+  const LIMIT = 2 * 1024 * 1024;
+  if (file.size > LIMIT) throw { status: 413, message: "La imagen supera el límite de 2 MB" };
+
+  const allowed = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
+  if (!allowed.includes(file.mimetype)) {
+    throw { status: 400, message: "Formato no permitido. Usá PNG, JPG, SVG o WEBP" };
+  }
+
+  const safeAssetType = String(assetType || "asset")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "asset";
+
+  const ext = (file.mimetype.split("/")[1] || "jpg")
+    .replace("jpeg", "jpg")
+    .replace("svg+xml", "svg");
+
+  const key = `sellers/${sellerId}/assets/${safeAssetType}/${Date.now()}.${ext}`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket:      BUCKET,
+    Key:         key,
+    Body:        file.buffer,
+    ContentType: file.mimetype,
+  }));
+
+  const url = publicS3Url(key);
+  return { key, url };
+}
+
+export async function uploadLogo(sellerId, file) {
+  return uploadStoreAsset(sellerId, "logo", file);
 }
 
 export async function deleteImage(sellerId, key) {

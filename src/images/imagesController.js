@@ -35,6 +35,25 @@ export async function deleteImage(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+
+export async function uploadLogo(req, res) {
+  try {
+    const result = await imagesService.uploadLogo(req.seller.id, req.file);
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function uploadStoreAsset(req, res) {
+  try {
+    const result = await imagesService.uploadStoreAsset(
+      req.seller.id,
+      req.params.assetType,
+      req.file,
+    );
+    return res.status(201).json(result);
+  } catch (err) { handleError(res, err); }
+}
+
 export async function uploadDescriptionMedia(req, res) {
   try {
     const result = await imagesService.uploadDescriptionMedia(
