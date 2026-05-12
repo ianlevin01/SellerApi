@@ -3,24 +3,9 @@ import * as repo from "./payoutsRepository.js";
 // ── Helpers ───────────────────────────────────────────────────
 
 function validateCbuFormat(cbu) {
-  if (!/^\d{22}$/.test(cbu)) return false;
-
-  function checkDigit(block, weights) {
-    const sum = block.split("").reduce((acc, d, i) => acc + Number(d) * weights[i], 0);
-    const rem = sum % 10;
-    return rem === 0 ? 0 : 10 - rem;
-  }
-
-  const w1 = [7, 1, 3, 9, 7, 1, 3];
-  const w2 = [3, 7, 1, 3, 9, 7, 1, 3, 7, 1, 3, 7, 1];
-
-  const block1 = cbu.slice(0, 8);
-  const block2 = cbu.slice(8, 22);
-
-  if (checkDigit(block1.slice(0, 7), w1) !== Number(block1[7])) return false;
-  if (checkDigit(block2.slice(0, 13), w2) !== Number(block2[13])) return false;
-
-  return true;
+  // CVU (billeteras virtuales) y CBU (bancos tradicionales) son ambos 22 dígitos
+  // pero el CVU no sigue el checksum de CBU, así que solo validamos el largo
+  return /^\d{22}$/.test(cbu);
 }
 
 function getPctGanancia(total) {

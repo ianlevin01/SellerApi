@@ -17,7 +17,7 @@ export async function signKey(key) {
   if (!key || typeof key !== "string") return null;
   try {
     const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: key });
-    return await getSignedUrl(s3, cmd, { expiresIn: 3600 });
+    return await getSignedUrl(s3, cmd, { expiresIn: 604800 });
   } catch (err) {
     console.error(`[s3] signKey error for "${key}": ${err.message}`);
     return null;
