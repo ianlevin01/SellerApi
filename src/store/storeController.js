@@ -172,8 +172,9 @@ export async function getShippingRates(req, res) {
 export async function getShippingAgencies(req, res) {
   try {
     const province = req.query.province || req.query.provincia || "";
+    const cp       = req.query.cp || "";
     if (!province) return res.status(400).json({ message: "province requerida" });
-    const result = await storeService.getShippingAgencies(req.params.slug, province);
+    const result = await storeService.getShippingAgencies(req.params.slug, province, cp);
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }

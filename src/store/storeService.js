@@ -381,10 +381,19 @@ export async function getShippingRates(slug, cp) {
   return shippingService.getRates(cp);
 }
 
-export async function getShippingAgencies(slug, province) {
+export async function getShippingAgencies(slug, province, cp) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
-  return shippingService.getAgencies(province);
+  const all = await shippingService.getAgencies(province);
+  if (!cp) return all;
+  const userCp = parseInt(cp, 10);
+  if (isNaN(userCp)) return all;
+  const nearby = all.filter(a => {
+    const aCp = parseInt(a.cp, 10);
+    return !isNaN(aCp) && Math.abs(aCp - userCp) <= 1;
+  });
+  console.log(`[agencies] cp=${cp} → ${all.length} total, ${nearby.length} nearby`);
+  return nearby.length > 0 ? nearby : all;
 }
 
 export async function setProductPrice(pageId, sellerId, productId, customPrice) {
