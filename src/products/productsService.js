@@ -24,7 +24,6 @@ export async function getProduct(pageId, sellerId, productId) {
 
 export async function getProducts(pageId, sellerId, filters) {
   const limit  = Math.min(Number(filters.limit) || 20, 500);
-  const hasFilters = filters.search || filters.categoryId || filters.onlyMine;
   const offset = Number(filters.offset) || 0;
 
   const [{ rows, total }, cotizacion, totalSales] = await Promise.all([
@@ -49,9 +48,9 @@ export async function getProducts(pageId, sellerId, filters) {
   return { products, total, limit, offset, hasMore: offset + limit < total };
 }
 
-export async function addProduct(pageId, sellerId, productId) {
+export async function addProduct(pageId, sellerId, productId, customPrice) {
   if (!productId) throw { status: 400, message: "productId requerido" };
-  await productsRepository.addProduct(pageId, sellerId, productId);
+  await productsRepository.addProduct(pageId, sellerId, productId, customPrice);
   return { message: "Producto agregado a la tienda" };
 }
 

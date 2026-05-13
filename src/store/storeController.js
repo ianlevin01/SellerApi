@@ -111,11 +111,12 @@ export async function getPageProduct(req, res) {
 
 export async function getPageProducts(req, res) {
   try {
-    const { search, category_id, only_mine, limit, offset } = req.query;
+    const { search, category_id, only_mine, not_mine, limit, offset } = req.query;
     const result = await productsService.getProducts(req.params.pageId, req.seller.id, {
       search,
       categoryId: category_id,
       onlyMine:   only_mine === "true",
+      notMine:    not_mine  === "true",
       limit:      limit  ? Number(limit)  : 20,
       offset:     offset ? Number(offset) : 0,
     });
@@ -125,7 +126,8 @@ export async function getPageProducts(req, res) {
 
 export async function addPageProduct(req, res) {
   try {
-    const result = await productsService.addProduct(req.params.pageId, req.seller.id, req.params.productId);
+    const { custom_price } = req.body;
+    const result = await productsService.addProduct(req.params.pageId, req.seller.id, req.params.productId, custom_price);
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }
 }

@@ -1,7 +1,7 @@
 // src/modules/products/productsRepository.js
 import pool from "../database/db.js"
 
-export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, limit = 20, offset = 0 }) {
+export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, limit = 20, offset = 0 }) {
   let query = `
     SELECT
       p.id, p.code, p.name, p.description, p.active,
@@ -16,9 +16,9 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       (SELECT sp.id FROM seller_products sp
-       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS seller_product_id,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS seller_product_id,
       (SELECT sp.active FROM seller_products sp
-       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS in_my_store,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS in_my_store,
       (SELECT sp.custom_name FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_name,
       (SELECT sp.custom_desc FROM seller_products sp
@@ -27,6 +27,10 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_price,
       COALESCE((SELECT sp.free_shipping FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS free_shipping,
+      (SELECT sp.promo_price FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS promo_price,
+      COALESCE((SELECT sp.promo_enabled FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS promo_enabled,
       COALESCE(
         (SELECT json_agg(pi.key ORDER BY pi.created_at)
          FROM product_images pi WHERE pi.product_id = p.id), '[]'
@@ -62,6 +66,12 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       WHERE ($1::uuid IS NULL OR sp2.page_id = $1) AND sp2.seller_id = $2 AND sp2.product_id = p.id AND sp2.active = true
     )`;
   }
+  if (notMine) {
+    query += ` AND NOT EXISTS (
+      SELECT 1 FROM seller_products sp2
+      WHERE ($1::uuid IS NULL OR sp2.page_id = $1) AND sp2.seller_id = $2 AND sp2.product_id = p.id AND sp2.active = true
+    )`;
+  }
 
   const countQuery = `SELECT COUNT(*) FROM (${query}) AS sub`;
   const { rows: countRows } = await pool.query(countQuery, params);
@@ -74,12 +84,12 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
   return { rows, total };
 }
 
-export async function addProduct(pageId, sellerId, productId) {
+export async function addProduct(pageId, sellerId, productId, customPrice) {
   await pool.query(
-    `INSERT INTO seller_products (seller_id, page_id, product_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (page_id, product_id) DO UPDATE SET active = true`,
-    [sellerId, pageId, productId]
+    `INSERT INTO seller_products (seller_id, page_id, product_id, custom_price)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (page_id, product_id) DO UPDATE SET active = true, custom_price = COALESCE($4, seller_products.custom_price)`,
+    [sellerId, pageId, productId, customPrice || null]
   );
 }
 
@@ -111,9 +121,9 @@ export async function findById(pageId, sellerId, productId) {
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       (SELECT sp.id FROM seller_products sp
-       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS seller_product_id,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS seller_product_id,
       (SELECT sp.active FROM seller_products sp
-       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS in_my_store,
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS in_my_store,
       (SELECT sp.custom_name FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_name,
       (SELECT sp.custom_desc FROM seller_products sp
@@ -122,6 +132,10 @@ export async function findById(pageId, sellerId, productId) {
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS custom_price,
       COALESCE((SELECT sp.free_shipping FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS free_shipping,
+      (SELECT sp.promo_price FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS promo_price,
+      COALESCE((SELECT sp.promo_enabled FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS promo_enabled,
       COALESCE(
         (SELECT json_agg(pi.key ORDER BY pi.created_at)
          FROM product_images pi WHERE pi.product_id = p.id), '[]'
