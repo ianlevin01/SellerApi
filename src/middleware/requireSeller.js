@@ -1,7 +1,8 @@
 // src/middleware/requireSeller.js
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET_SELLER || "seller_secret_dev";
+const JWT_SECRET = process.env.JWT_SECRET_SELLER;
+if (!JWT_SECRET) throw new Error("JWT_SECRET_SELLER env var requerida");
 
 export default function requireSeller(req, res, next) {
   const header = req.headers.authorization || "";

@@ -1,7 +1,8 @@
 // src/index.js
 import "dotenv/config";
-import express from "express";
-import cors    from "cors";
+import express   from "express";
+import cors      from "cors";
+import rateLimit from "express-rate-limit";
 
 import authRoutes     from "./auth/authRoutes.js";
 import productsRoutes from "./products/productsRoutes.js";
@@ -35,13 +36,31 @@ app.use(cors({
       origin === `https://${STORE_DOMAIN}` ||
       origin.endsWith(`.${STORE_DOMAIN}`)
     )) return cb(null, true);
-    if (!SELLER_APP && !STORE_DOMAIN && !ADMIN_PANEL) return cb(null, true);
     cb(new Error("Not allowed by CORS"));
   },
   credentials: true,
 }));
 app.use(express.json());
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Demasiados intentos. Esperá 15 minutos antes de intentar de nuevo." },
+});
+
+const checkoutLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Demasiados pedidos desde tu IP. Intentá más tarde." },
+});
+
+app.post("/seller/auth/login",    authLimiter);
+app.post("/seller/auth/register", authLimiter);
+app.post("/seller/auth/google",   authLimiter);
 app.use("/seller/auth",           authRoutes);
 app.use("/seller/products",       productsRoutes);
 app.use("/seller/store",          storeRoutes);
@@ -49,6 +68,7 @@ app.use("/seller/images",         imagesRoutes);
 app.use("/seller/chat",           chatSellerRouter);
 app.use("/seller/chat/admin",     sellerAdminChatRouter);
 app.use("/store/:slug/chat",      chatPublicRouter);
+app.post("/seller/purchase/public/:slug/checkout", checkoutLimiter);
 app.use("/seller/purchase",       purchaseRoutes);
 app.use("/seller/payouts",        payoutsRoutes);
 app.use("/seller/ai-assistant",   aiAssistantRoutes);

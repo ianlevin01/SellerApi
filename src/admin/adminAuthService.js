@@ -2,7 +2,8 @@ import bcrypt from "bcrypt";
 import jwt    from "jsonwebtoken";
 import * as repo from "./adminAuthRepository.js";
 
-const SECRET = process.env.JWT_SECRET_ADMIN || "admin_secret_dev";
+const SECRET = process.env.JWT_SECRET_ADMIN;
+if (!SECRET) throw new Error("JWT_SECRET_ADMIN env var requerida");
 
 export async function login(email, password) {
   if (!email || !password)

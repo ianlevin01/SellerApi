@@ -13,7 +13,8 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 
-const JWT_SECRET = process.env.JWT_SECRET_SELLER || "seller_secret_dev";
+const JWT_SECRET = process.env.JWT_SECRET_SELLER;
+if (!JWT_SECRET) throw new Error("JWT_SECRET_SELLER env var requerida");
 const BASE_URL   = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 
 

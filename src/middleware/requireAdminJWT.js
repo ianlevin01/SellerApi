@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 
-const SECRET = process.env.JWT_SECRET_ADMIN || "admin_secret_dev";
+const SECRET = process.env.JWT_SECRET_ADMIN;
+if (!SECRET) throw new Error("JWT_SECRET_ADMIN env var requerida");
 
 export default function requireAdminJWT(req, res, next) {
   const auth = req.headers.authorization || "";

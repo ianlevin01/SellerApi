@@ -1,7 +1,7 @@
-import { Router } from "express";
-import requireSeller from "../middleware/requireSeller.js";
-import requireAdmin  from "../middleware/requireAdmin.js";
-import * as service  from "./payoutsService.js";
+import { Router }        from "express";
+import requireSeller     from "../middleware/requireSeller.js";
+import requireAdminJWT   from "../middleware/requireAdminJWT.js";
+import * as service      from "./payoutsService.js";
 
 const router = Router();
 
@@ -37,7 +37,7 @@ router.post("/request", requireSeller, async (req, res) => {
 
 // ── Admin ─────────────────────────────────────────────────────
 
-router.patch("/orders/:webOrderId/approve", requireAdmin, async (req, res) => {
+router.patch("/orders/:webOrderId/approve", requireAdminJWT, async (req, res) => {
   try {
     await service.approveOrderEarning(req.params.webOrderId);
     res.json({ ok: true });
@@ -46,7 +46,7 @@ router.patch("/orders/:webOrderId/approve", requireAdmin, async (req, res) => {
   }
 });
 
-router.patch("/transfers/:payoutId/transferred", requireAdmin, async (req, res) => {
+router.patch("/transfers/:payoutId/transferred", requireAdminJWT, async (req, res) => {
   try {
     await service.markPayoutTransferred(req.params.payoutId);
     res.json({ ok: true });

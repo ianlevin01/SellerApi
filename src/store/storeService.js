@@ -349,7 +349,7 @@ export async function updateDiscounts(pageId, sellerId, body) {
 
 // ── Checkout público (crea el pedido y devuelve URL de pago si está configurada) ──
 
-export async function createCheckout(slug, { customer, items, total }) {
+export async function createCheckout(slug, { customer, items }) {
   if (!items || items.length === 0)
     throw { status: 400, message: "El carrito está vacío" };
   if (!customer?.name)
@@ -360,15 +360,30 @@ export async function createCheckout(slug, { customer, items, total }) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
-  const order = await storeRepository.createPublicOrder({
-    customer, total, seller_id: page.seller_id,
-  });
-  await storeRepository.createOrderItems(order.id, items);
-  notifySellerNewOrder(page.seller_id, { ...order, total }, items);
+  const [cotizacion, totalSales] = await Promise.all([
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(page.seller_id),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
 
-  // TODO: Integrar LemonSqueezy cuando esté configurado.
-  // const checkout_url = await createLemonSqueezyCheckout({ order, items, customer });
-  // if (checkout_url) return { numero: order.numero, checkout_url };
+  let realTotal = 0;
+  const pricedItems = [];
+  for (const item of items) {
+    const [costUsd, sellerProduct] = await Promise.all([
+      storeRepository.getCostUsdForProduct(item.product_id),
+      storeRepository.getSellerProduct(page.id, item.product_id),
+    ]);
+    const precioBase  = calcShownCost(costUsd, cotizacion, platformPct);
+    const unitPrice   = sellerProduct?.custom_price ? Number(sellerProduct.custom_price) : precioBase;
+    realTotal += unitPrice * item.quantity;
+    pricedItems.push({ product_id: item.product_id, name: item.name, quantity: item.quantity, unit_price: unitPrice });
+  }
+
+  const order = await storeRepository.createPublicOrder({
+    customer, total: realTotal, seller_id: page.seller_id,
+  });
+  await storeRepository.createOrderItems(order.id, pricedItems);
+  notifySellerNewOrder(page.seller_id, { ...order, total: realTotal }, pricedItems);
 
   return { numero: order.numero, order_number: order.numero };
 }
@@ -459,7 +474,7 @@ export async function getMyTierInfo(sellerId) {
   };
 }
 
-export async function createPublicOrder(slug, { customer, items, total }) {
+export async function createPublicOrder(slug, { customer, items }) {
   if (!items || items.length === 0)
     throw { status: 400, message: "El carrito está vacío" };
   if (!customer?.name)
@@ -468,11 +483,30 @@ export async function createPublicOrder(slug, { customer, items, total }) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
+  const [cotizacion, totalSales] = await Promise.all([
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(page.seller_id),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
+
+  let realTotal = 0;
+  const pricedItems = [];
+  for (const item of items) {
+    const [costUsd, sellerProduct] = await Promise.all([
+      storeRepository.getCostUsdForProduct(item.product_id),
+      storeRepository.getSellerProduct(page.id, item.product_id),
+    ]);
+    const precioBase  = calcShownCost(costUsd, cotizacion, platformPct);
+    const unitPrice   = sellerProduct?.custom_price ? Number(sellerProduct.custom_price) : precioBase;
+    realTotal += unitPrice * item.quantity;
+    pricedItems.push({ product_id: item.product_id, name: item.name, quantity: item.quantity, unit_price: unitPrice });
+  }
+
   const order = await storeRepository.createPublicOrder({
-    customer, total, seller_id: page.seller_id,
+    customer, total: realTotal, seller_id: page.seller_id,
   });
-  await storeRepository.createOrderItems(order.id, items);
-  notifySellerNewOrder(page.seller_id, { ...order, total }, items);
+  await storeRepository.createOrderItems(order.id, pricedItems);
+  notifySellerNewOrder(page.seller_id, { ...order, total: realTotal }, pricedItems);
 
   return { message: "Pedido recibido", numero: order.numero };
 }
