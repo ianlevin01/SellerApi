@@ -1,13 +1,27 @@
 import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import s3, { BUCKET, signKey, signKeys } from "../utils/s3Client.js";
 import * as combosRepository from "./combosRepository.js";
+import * as storeRepository from "../store/storeRepository.js";
+import { calcShownCost, getSellerPlatformPct } from "../utils/pricing.js";
 
 export async function getCombos(pageId, sellerId) {
-  const combos = await combosRepository.findByPage(pageId, sellerId);
-  return Promise.all(combos.map(async c => ({
-    ...c,
-    images: await signKeys(c.image_keys || []),
-  })));
+  const [combos, cotizacion, totalSales] = await Promise.all([
+    combosRepository.findByPage(pageId, sellerId),
+    storeRepository.getCotizacion(),
+    storeRepository.getSellerTotalSales(sellerId),
+  ]);
+  const platformPct = getSellerPlatformPct(totalSales);
+
+  return Promise.all(combos.map(async c => {
+    const comboCostMin = (c.products || []).reduce((sum, p) => {
+      return sum + calcShownCost(p.cost_usd || 0, cotizacion, platformPct) * (p.quantity || 1);
+    }, 0);
+    return {
+      ...c,
+      images:          await signKeys(c.image_keys || []),
+      combo_cost_min:  Math.round(comboCostMin),
+    };
+  }));
 }
 
 export async function getPublicCombos(pageId) {

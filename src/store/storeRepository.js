@@ -203,7 +203,15 @@ export async function getPublicProducts(pageId, sellerId) {
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
-       AND (COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) >= 10
+       AND CASE
+         WHEN (
+           COALESCE((SELECT pc2.cost FROM product_costs pc2 WHERE pc2.product_id = p.id ORDER BY pc2.created_at DESC LIMIT 1), 0)
+           * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
+           * 1.56
+         ) > 100000
+         THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) > 0
+         ELSE (COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) >= 10
+       END
      ORDER BY p.name`,
     [pageId, sellerId]
   );

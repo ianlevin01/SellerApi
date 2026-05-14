@@ -9,7 +9,8 @@ export async function findByPage(pageId, sellerId) {
            'product_id', cp.product_id,
            'quantity',   cp.quantity,
            'name',       p.name,
-           'code',       p.code
+           'code',       p.code,
+           'cost_usd',   COALESCE((SELECT cost FROM product_costs WHERE product_id = p.id ORDER BY created_at DESC LIMIT 1), 0)
          ) ORDER BY cp.id)
          FROM combo_products cp
          JOIN products p ON p.id = cp.product_id

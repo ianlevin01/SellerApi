@@ -40,11 +40,13 @@ export function startStockListener() {
 async function handleAlert(productId, availableStock) {
   const { rows } = await pool.query(
     `SELECT p.name, p.code,
+            COALESCE((SELECT pc.cost FROM product_costs pc WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1), 0) AS costo_usd,
+            COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0) AS cotizacion,
             s.id AS seller_id, s.email, s.name AS seller_name
      FROM products p
      JOIN seller_products sp ON sp.product_id = p.id
      JOIN sellers s ON s.id = sp.seller_id
-     WHERE p.id = $1 AND s.active = true`,
+     WHERE p.id = $1 AND s.active = true AND sp.active = true`,
     [productId]
   );
 
@@ -52,20 +54,41 @@ async function handleAlert(productId, availableStock) {
 
   const productName = rows[0].name;
   const productCode = rows[0].code || productId;
+  const precio1     = Number(rows[0].costo_usd) * Number(rows[0].cotizacion) * 1.56;
+  const isExpensive = precio1 > 100000;
+
+  // For expensive products: only alert when stock_total = 0 (trigger fires at <10 but we skip)
+  if (isExpensive && availableStock > 0) {
+    console.log(`[stock-listener] expensive product ${productCode} — stock ${availableStock}, skip until 0`);
+    return;
+  }
+
+  const stockTotal = await pool.query(
+    `SELECT COALESCE(SUM(quantity), 0) AS total FROM stock WHERE product_id = $1`,
+    [productId]
+  );
+  const rawStock = Number(stockTotal.rows[0]?.total || 0);
+
+  // For expensive products: we've already checked availableStock <= 0, use rawStock
+  // For regular products: standard < 10 alert
+  const alertStock = isExpensive ? rawStock : availableStock;
 
   for (const seller of rows) {
     try {
       await transporter.sendMail({
-        from: `"Ventaz" <${process.env.SMTP_USER}>`,
-        to: seller.email,
-        subject: `Stock bajo: ${productName}`,
+        from:    `"Ventaz" <${process.env.SMTP_USER}>`,
+        to:      seller.email,
+        subject: `Stock ${isExpensive ? "agotado" : "bajo"}: ${productName}`,
         html: `
           <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
-            <h2 style="color:#ef4444">Stock bajo en tu tienda</h2>
+            <h2 style="color:#ef4444">Stock ${isExpensive ? "agotado" : "bajo"} en tu tienda</h2>
             <p>Hola <strong>${seller.seller_name}</strong>,</p>
-            <p>El producto <strong>${productName}</strong> (código: ${productCode})
-               tiene <strong>${availableStock} unidades disponibles</strong> —
-               por debajo del mínimo de 10.</p>
+            ${isExpensive
+              ? `<p>El producto <strong>${productName}</strong> (código: ${productCode}) se ha <strong>agotado</strong> (0 unidades).`
+              : `<p>El producto <strong>${productName}</strong> (código: ${productCode})
+                   tiene <strong>${alertStock} unidades disponibles</strong> —
+                   por debajo del mínimo de 10.`
+            }
             <p>Este producto ya <strong>no es visible</strong> para tus clientes
                hasta que el stock se reponga.</p>
             <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>

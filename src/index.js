@@ -14,6 +14,8 @@ import { publicRouter as chatPublicRouter, sellerRouter as chatSellerRouter } fr
 import adminAuthRoutes  from "./admin/adminAuthRoutes.js";
 import adminRoutes      from "./admin/adminRoutes.js";
 import { adminChatRouter, adminMonitorRouter, sellerAdminChatRouter } from "./admin/adminChatRoutes.js";
+import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerChatRoutes.js";
+import onboardingRoutes from "./onboarding/onboardingRoutes.js";
 import { startStockListener } from "./stock/stockListener.js";
 
 const app  = express();
@@ -50,11 +52,15 @@ app.use("/store/:slug/chat",      chatPublicRouter);
 app.use("/seller/purchase",       purchaseRoutes);
 app.use("/seller/payouts",        payoutsRoutes);
 app.use("/seller/ai-assistant",   aiAssistantRoutes);
+app.use("/seller/onboarding",     onboardingRoutes);
 
-app.use("/admin/auth",         adminAuthRoutes);
-app.use("/admin",              adminRoutes);
-app.use("/admin/chat",         adminChatRouter);
-app.use("/admin/monitor",      adminMonitorRouter);
+app.use("/admin/auth",             adminAuthRoutes);
+app.use("/admin",                  adminRoutes);
+app.use("/admin/chat",             adminChatRouter);
+app.use("/admin/monitor",          adminMonitorRouter);
+app.use("/admin/consumer-chat",    consumerAdminRouter);
+
+app.use("/consumer",               consumerPublicRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

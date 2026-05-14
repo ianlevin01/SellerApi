@@ -41,7 +41,16 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
          WHERE si.seller_id = $2 AND si.product_id = p.id
            AND ($1::uuid IS NULL OR si.page_id = $1)
            AND ($1::uuid IS NOT NULL OR si.page_id IS NULL)), '[]'
-      ) AS seller_images
+      ) AS seller_images,
+      CASE
+        WHEN (
+          COALESCE((SELECT pc2.cost FROM product_costs pc2 WHERE pc2.product_id = p.id ORDER BY pc2.created_at DESC LIMIT 1), 0)
+          * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
+          * 1.56
+        ) > 100000
+        THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) <= 0
+        ELSE GREATEST(0, COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) < 10
+      END AS is_low_stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     WHERE p.active = true
@@ -70,6 +79,17 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     query += ` AND NOT EXISTS (
       SELECT 1 FROM seller_products sp2
       WHERE ($1::uuid IS NULL OR sp2.page_id = $1) AND sp2.seller_id = $2 AND sp2.product_id = p.id AND sp2.active = true
+    )
+    AND NOT (
+      CASE
+        WHEN (
+          COALESCE((SELECT pc3.cost FROM product_costs pc3 WHERE pc3.product_id = p.id ORDER BY pc3.created_at DESC LIMIT 1), 0)
+          * COALESCE((SELECT cfg2.cotizacion_dolar FROM price_config cfg2 WHERE cfg2.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
+          * 1.56
+        ) > 100000
+        THEN COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id), 0) <= 0
+        ELSE GREATEST(0, COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) < 10
+      END
     )`;
   }
 
