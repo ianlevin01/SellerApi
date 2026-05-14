@@ -224,7 +224,7 @@ export async function getAllProducts() {
   const { rows } = await pool.query(`
     SELECT p.id, p.code, p.name, p.active,
            c.name AS category_name,
-           (SELECT pc.cost FROM product_costs pc WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS cost_usd,
+           p.costo_usd AS cost_usd,
            COALESCE((SELECT s.quantity FROM stock s WHERE s.product_id = p.id LIMIT 1), 0) AS stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
@@ -233,8 +233,18 @@ export async function getAllProducts() {
 }
 
 export async function updateProductCost(productId, cost) {
-  await pool.query(
-    `INSERT INTO product_costs (product_id, cost) VALUES ($1, $2)`, [productId, cost]);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE products SET costo_usd = $1 WHERE id = $2`, [cost, productId]);
+    await client.query(`INSERT INTO product_costs (product_id, cost) VALUES ($1, $2)`, [productId, cost]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getPriceConfig() {

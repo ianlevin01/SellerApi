@@ -29,8 +29,7 @@ export async function getProductsByIds(ids, pageId) {
   const { rows } = await pool.query(
     `SELECT
        p.id, p.name,
-       (SELECT pc.cost FROM product_costs pc
-        WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+       p.costo_usd,
        sp.custom_price,
        COALESCE(sp.free_shipping, false) AS free_shipping
      FROM products p

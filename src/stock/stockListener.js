@@ -40,7 +40,7 @@ export function startStockListener() {
 async function handleAlert(productId, availableStock) {
   const { rows } = await pool.query(
     `SELECT p.name, p.code,
-            COALESCE((SELECT pc.cost FROM product_costs pc WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1), 0) AS costo_usd,
+            COALESCE(p.costo_usd, 0) AS costo_usd,
             COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0) AS cotizacion,
             s.id AS seller_id, s.email, s.name AS seller_name
      FROM products p

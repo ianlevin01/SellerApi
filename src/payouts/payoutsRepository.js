@@ -144,10 +144,10 @@ export async function getOrderForEarning(webOrderId) {
 
 export async function getCostUsdForProduct(productId) {
   const { rows } = await pool.query(
-    `SELECT cost FROM product_costs WHERE product_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT costo_usd FROM products WHERE id = $1`,
     [productId]
   );
-  return Number(rows[0]?.cost || 0);
+  return Number(rows[0]?.costo_usd || 0);
 }
 
 export async function getCotizacion() {

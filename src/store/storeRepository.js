@@ -158,10 +158,10 @@ export async function getOrders(sellerId) {
 
 export async function getCostUsdForProduct(productId) {
   const { rows } = await pool.query(
-    `SELECT cost FROM product_costs WHERE product_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT costo_usd FROM products WHERE id = $1`,
     [productId]
   );
-  return Number(rows[0]?.cost || 0);
+  return Number(rows[0]?.costo_usd || 0);
 }
 
 // ── Tienda pública ────────────────────────────────────────────
@@ -182,8 +182,7 @@ export async function getPublicProducts(pageId, sellerId) {
     `SELECT
        p.id, p.code, p.name, p.description, p.category_id,
        c.name AS category_name,
-       (SELECT pc.cost FROM product_costs pc
-        WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+       p.costo_usd,
        spc.custom_price,
        COALESCE(
          (SELECT json_agg(si.key ORDER BY si."order")
@@ -205,7 +204,7 @@ export async function getPublicProducts(pageId, sellerId) {
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
        AND CASE
          WHEN (
-           COALESCE((SELECT pc2.cost FROM product_costs pc2 WHERE pc2.product_id = p.id ORDER BY pc2.created_at DESC LIMIT 1), 0)
+           COALESCE(p.costo_usd, 0)
            * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
            * 1.56
          ) > 100000

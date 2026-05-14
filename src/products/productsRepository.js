@@ -6,9 +6,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     SELECT
       p.id, p.code, p.name, p.description, p.active,
       p.category_id, c.name AS category_name,
-      (SELECT pc.cost FROM product_costs pc
-       WHERE pc.product_id = p.id
-       ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+      p.costo_usd,
       COALESCE(
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) AS stock_total,
@@ -44,7 +42,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       ) AS seller_images,
       CASE
         WHEN (
-          COALESCE((SELECT pc2.cost FROM product_costs pc2 WHERE pc2.product_id = p.id ORDER BY pc2.created_at DESC LIMIT 1), 0)
+          COALESCE(p.costo_usd, 0)
           * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
           * 1.56
         ) > 100000
@@ -83,7 +81,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     AND NOT (
       CASE
         WHEN (
-          COALESCE((SELECT pc3.cost FROM product_costs pc3 WHERE pc3.product_id = p.id ORDER BY pc3.created_at DESC LIMIT 1), 0)
+          COALESCE(p.costo_usd, 0)
           * COALESCE((SELECT cfg2.cotizacion_dolar FROM price_config cfg2 WHERE cfg2.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
           * 1.56
         ) > 100000
@@ -135,8 +133,7 @@ export async function findById(pageId, sellerId, productId) {
     SELECT
       p.id, p.code, p.name, p.description, p.active,
       p.category_id, c.name AS category_name,
-      (SELECT pc.cost FROM product_costs pc
-       WHERE pc.product_id = p.id ORDER BY pc.created_at DESC LIMIT 1) AS costo_usd,
+      p.costo_usd,
       GREATEST(0, COALESCE(
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
