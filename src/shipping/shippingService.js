@@ -199,7 +199,7 @@ export async function getAgencies(provinceOrCp) {
                   : "",
       city:     a.location?.address?.city     || "",
       province: a.location?.address?.provinceCode || code,
-      cp:       a.location?.address?.postalCode || "",
+      cp:       ((a.location?.address?.postalCode || "").match(/\d{4}/) || [""])[0],
     }));
   } catch (err) {
     console.error("[MiCorreo] getAgencies error:", err.message);
