@@ -218,3 +218,57 @@ export async function googleLogin(idToken) {
     },
   };
 }
+
+export async function forgotPassword(email) {
+  if (!email) throw { status: 400, message: "Email requerido" };
+  const normalized = email.toLowerCase().trim();
+
+  const exists = await authRepository.emailExists(normalized);
+  if (!exists) throw { status: 404, message: "No existe una cuenta con ese email" };
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const expiresAt  = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+  await authRepository.saveResetToken(normalized, resetToken, expiresAt);
+
+  const link = `${BASE_URL}/reset-password?token=${resetToken}`;
+  await transporter.sendMail({
+    from:    process.env.SMTP_FROM || "noreply@ventaz.com.ar",
+    to:      normalized,
+    subject: "Restablecer contraseña — Ventaz",
+    html: `
+      <div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f4f7ef;border-radius:16px">
+        <h2 style="margin:0 0 12px;color:#0f172a;font-size:1.4rem">Restablecer contraseña</h2>
+        <p style="margin:0 0 24px;color:#4b6f43;line-height:1.6">
+          Recibimos una solicitud para cambiar la contraseña de tu cuenta de Ventaz.<br/>
+          Hacé clic en el botón para crear una nueva. El link es válido por <strong>1 hora</strong>.
+        </p>
+        <a href="${link}" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#73e43b,#329f10);color:#fff;border-radius:12px;text-decoration:none;font-weight:700;font-size:.95rem">
+          Restablecer contraseña
+        </a>
+        <p style="margin:24px 0 0;color:#7b867d;font-size:.82rem">
+          Si no solicitaste este cambio, podés ignorar este mensaje. Tu contraseña no se modificará.
+        </p>
+      </div>
+    `,
+  });
+
+  return { message: "Te enviamos un email con el link para restablecer tu contraseña." };
+}
+
+export async function resetPassword(token, newPassword) {
+  if (!token)       throw { status: 400, message: "Token requerido" };
+  if (!newPassword) throw { status: 400, message: "Nueva contraseña requerida" };
+  if (newPassword.length < 8)
+    throw { status: 400, message: "La contraseña debe tener al menos 8 caracteres" };
+
+  const seller = await authRepository.findSellerByResetToken(token);
+  if (!seller) throw { status: 400, message: "El link es inválido o ya fue utilizado" };
+  if (new Date() > new Date(seller.reset_token_expires_at))
+    throw { status: 400, message: "El link expiró. Solicitá uno nuevo." };
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await authRepository.updatePasswordAndClearToken(seller.id, passwordHash);
+
+  return { message: "Contraseña actualizada correctamente. Ya podés iniciar sesión." };
+}

@@ -43,7 +43,6 @@ router.get("/confirm", async (req, res) => {
 
 // Webhook de Mercado Pago — sin auth, MP lo llama directamente
 router.post("/webhook", async (req, res) => {
-  console.log("llego")
   try {
     await checkoutService.handleWebhook(req.query, req.body);
     return res.sendStatus(200);

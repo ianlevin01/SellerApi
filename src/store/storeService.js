@@ -183,6 +183,7 @@ export async function updatePageConfig(pageId, sellerId, body) {
   if (body.pct_markup !== undefined && Number(body.pct_markup) < 0)
     throw { status: 400, message: "El markup no puede ser negativo" };
   const {
+    slug,
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
     logo_url, font_family, color_secondary, color_bg, color_text, featured_categories,
@@ -190,7 +191,12 @@ export async function updatePageConfig(pageId, sellerId, body) {
     hero_headline, hero_image_url, promo_text, show_promo_bar,
     theme_config, costo_envio,
   } = body;
+  if (slug !== undefined) {
+    if (!slug || !/^[a-z0-9-]+$/.test(slug))
+      throw { status: 400, message: "El slug solo puede contener letras minúsculas, números y guiones" };
+  }
   const updated = await storeRepository.updatePage(pageId, sellerId, {
+    slug,
     page_name, store_name, store_description, banner_color, pct_markup,
     tagline, whatsapp, instagram, facebook,
     logo_url: normalizeStoreAssetValue(logo_url),
@@ -407,7 +413,7 @@ export async function getShippingAgencies(slug, province, cp) {
     const aCp = parseInt(a.cp, 10);
     return !isNaN(aCp) && Math.abs(aCp - userCp) <= 1;
   });
-  console.log(`[agencies] cp=${cp} → ${all.length} total, ${nearby.length} nearby`);
+;
   return nearby.length > 0 ? nearby : all;
 }
 

@@ -82,3 +82,17 @@ export async function uploadAvatar(req, res) {
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }
 }
+
+export async function forgotPassword(req, res) {
+  try {
+    const result = await authService.forgotPassword(req.body.email);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function resetPassword(req, res) {
+  try {
+    const result = await authService.resetPassword(req.body.token, req.body.password);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}

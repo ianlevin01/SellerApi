@@ -186,9 +186,6 @@ export async function getAgencies(provinceOrCp) {
     const data = await resp.json();
     const raw  = Array.isArray(data) ? data : [];
 
-    if (raw.length > 0) {
-      console.log("[MiCorreo] sample agency raw:", JSON.stringify(raw[0], null, 2));
-    }
 
     // Response: [{ code, name, location: { address: { streetName, city, postalCode } } }]
     return raw.map(a => ({

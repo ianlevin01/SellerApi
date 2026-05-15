@@ -135,6 +135,31 @@ export async function verifySellerToken(token) {
 }
 
 
+export async function saveResetToken(email, token, expiresAt) {
+  await pool.query(
+    `UPDATE sellers SET reset_token = $1, reset_token_expires_at = $2 WHERE email = $3`,
+    [token, expiresAt, email]
+  );
+}
+
+export async function findSellerByResetToken(token) {
+  const { rows } = await pool.query(
+    `SELECT id, email, name, reset_token_expires_at
+     FROM sellers WHERE reset_token = $1 AND active = true`,
+    [token]
+  );
+  return rows[0] || null;
+}
+
+export async function updatePasswordAndClearToken(id, passwordHash) {
+  await pool.query(
+    `UPDATE sellers
+     SET password_hash = $1, reset_token = NULL, reset_token_expires_at = NULL
+     WHERE id = $2`,
+    [passwordHash, id]
+  );
+}
+
 export async function updateAvatarKey(id, avatarKey) {
   await ensureAvatarColumn();
   const { rows } = await pool.query(

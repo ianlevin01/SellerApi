@@ -17,5 +17,7 @@ router.put ("/profile",            requireSeller, authController.updateProfile);
 router.post("/avatar",             requireSeller, uploadAvatar.single("image"), authController.uploadAvatar);
 router.post("/phone/request-otp",  requireSeller, authController.requestOtp);
 router.post("/phone/verify-otp",   requireSeller, authController.verifyOtp);
+router.post("/forgot-password",    authController.forgotPassword);
+router.post("/reset-password",     authController.resetPassword);
 
 export default router;
