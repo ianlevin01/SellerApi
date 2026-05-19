@@ -22,6 +22,8 @@ import { startStockListener } from "./stock/stockListener.js";
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+app.set("trust proxy", 1); // Nginx sits in front — trust the first proxy for rate limiting
+
 const SELLER_APP    = process.env.SELLER_APP_URL;
 const STORE_DOMAIN  = process.env.STORE_PAGE_DOMAIN;
 const ADMIN_PANEL   = process.env.ADMIN_PANEL_URL;
