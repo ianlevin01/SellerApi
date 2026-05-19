@@ -37,6 +37,14 @@ async function getToken() {
 
 // Returns { available: boolean, rates: [...] }
 export async function getRates(cpDestino, weightGrams = DEF_WEIGHT) {
+  // TODO: remove hardcoded override once real API is tested
+  return {
+    available: true,
+    rates: [
+      { code: "CP", name: "Correo Argentino — Sucursal", price: 10, delivery_days: 5, home_delivery: false, branch_pickup: true },
+    ],
+  };
+
   if (!isConfigured()) return { available: false, rates: [] };
 
   try {
