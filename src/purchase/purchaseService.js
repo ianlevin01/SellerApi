@@ -5,7 +5,7 @@ import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
-import { sendOrderReceived, sendPaymentConfirmed } from "../email/buyerEmails.js";
+import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending } from "../email/buyerEmails.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -152,9 +152,15 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     free_shipping_absorbed: freeShippingAbsorbed,
   });
 
-  // 8. Email al comprador: pedido recibido (background, no bloquea)
+  // 8. Emails en background (no bloquean el flujo)
   sendOrderReceived({
     customer,
+    order,
+    items: enrichedItems,
+    shippingAmount,
+  });
+  sendSellerOrderPending({
+    sellerId: page.seller_id,
     order,
     items: enrichedItems,
     shippingAmount,

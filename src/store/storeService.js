@@ -92,7 +92,7 @@ async function notifySellerNewOrder(sellerId, order, items) {
   try {
     const seller    = await authRepository.findSellerById(sellerId);
     const adminTo   = process.env.ADMIN_EMAIL || "somosventaz@gmail.com";
-    const from      = process.env.SMTP_FROM   || "noreply@ventaz.online";
+    const FROM_ADDR = process.env.SMTP_FROM   || "noreply@ventaz.online";
     const totalFmt  = `$${Number(order.total ?? 0).toLocaleString("es-AR")}`;
 
     const itemRows = items.map(i => `
@@ -118,7 +118,7 @@ async function notifySellerNewOrder(sellerId, order, items) {
     // Notificación al vendedor
     if (seller?.email) {
       await transporter.sendMail({
-        from,
+        from: FROM_ADDR,
         to:      seller.email,
         subject: `Nueva venta #${order.numero} en tu tienda`,
         html: `
@@ -133,7 +133,7 @@ async function notifySellerNewOrder(sellerId, order, items) {
 
     // Notificación al admin
     await transporter.sendMail({
-      from,
+      from: FROM_ADDR,
       to:      adminTo,
       subject: `Nueva venta #${order.numero} — ${seller?.name || seller?.email || sellerId}`,
       html: `

@@ -1,7 +1,7 @@
 import { transporter } from "../config/mailer.js";
 import pool from "../database/db.js";
 
-const FROM    = process.env.SMTP_FROM  || "noreply@ventaz.online";
+const FROM    = process.env.SMTP_FROM || "noreply@ventaz.online";
 const BRAND   = "#6366f1";
 const BRAND_D = "#4f46e5";
 
@@ -41,7 +41,7 @@ function baseLayout(content) {
         <tr>
           <td style="background:#f9fafb;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 16px 16px;padding:20px 36px;text-align:center">
             <p style="margin:0;font-size:12px;color:#9ca3af">
-              Si tenés alguna consulta sobre tu pedido, respondé este mail o contactanos en
+              Si tenés alguna consulta sobre tu pedido, contactanos en
               <a href="mailto:somosventaz@gmail.com" style="color:${BRAND};text-decoration:none">somosventaz@gmail.com</a>
             </p>
             <p style="margin:8px 0 0;font-size:11px;color:#d1d5db">© 2025 Ventaz — Todos los derechos reservados</p>
@@ -77,7 +77,7 @@ function itemsTable(items) {
 }
 
 function totalBlock(total, shippingAmount = 0) {
-  const subtotal = total - shippingAmount;
+  const subtotal    = total - shippingAmount;
   const hasShipping = shippingAmount > 0;
   return `
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
@@ -99,7 +99,7 @@ function totalBlock(total, shippingAmount = 0) {
     </table>`;
 }
 
-// ── Email 1: pedido recibido (se envía al crear el checkout MP) ──────────────
+// ── Email 1: pedido recibido → comprador (al crear el checkout MP) ─────────
 
 export async function sendOrderReceived({ customer, order, items, shippingAmount = 0 }) {
   if (!customer?.email) return;
@@ -114,7 +114,7 @@ export async function sendOrderReceived({ customer, order, items, shippingAmount
       <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola, ${name} 👋</h2>
       <p style="margin:0 0 6px;font-size:15px;color:#374151">
         Recibimos tu pedido <strong style="color:${BRAND}">#${order.numero}</strong>.
-        Ahora completá el pago para confirmarlo y que el vendedor lo prepare.
+        Ahora completá el pago para confirmarlo.
       </p>
 
       ${itemsTable(items)}
@@ -123,29 +123,28 @@ export async function sendOrderReceived({ customer, order, items, shippingAmount
       <div style="margin-top:24px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:16px 18px">
         <p style="margin:0;font-size:13px;color:#5b21b6;font-weight:600">¿Qué sigue?</p>
         <p style="margin:6px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
-          Una vez que confirmemos tu pago, te enviaremos otro mail con la confirmación.
-          El vendedor coordinará la entrega o el retiro con vos.
+          Una vez confirmado tu pago, te enviaremos otro mail con la confirmación y el vendedor coordinará la entrega.
         </p>
       </div>
     `);
 
     await transporter.sendMail({
-      from,
+      from: FROM,
       to:      customer.email,
       subject: `✅ Pedido #${order.numero} recibido — Ventaz`,
       html,
     });
-  } catch {
-    // Email failure must never break the order flow
+  } catch (err) {
+    console.error("[email] sendOrderReceived error:", err.message);
   }
 }
 
-// ── Email 2: pago confirmado (se envía cuando MP confirma el pago) ──────────
+// ── Email 2: pago confirmado → comprador (cuando MP confirma) ─────────────
 
 export async function sendPaymentConfirmed(orderId) {
   try {
     const { rows } = await pool.query(
-      `SELECT wo.numero, wo.customer_name, wo.customer_email, wo.total,
+      `SELECT wo.id, wo.numero, wo.customer_name, wo.customer_email, wo.total, wo.seller_id,
               COALESCE(wo.shipping_amount, 0) AS shipping_amount,
               COALESCE(
                 (SELECT json_agg(json_build_object(
@@ -160,40 +159,121 @@ export async function sendPaymentConfirmed(orderId) {
     );
 
     const order = rows[0];
-    if (!order?.customer_email) return;
+    if (!order) return;
 
-    const name    = order.customer_name?.split(" ")[0] || "ahí";
-    const html    = baseLayout(`
-      <div style="display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;margin-bottom:24px">
-        <span style="font-size:20px">💳</span>
-        <span style="font-size:14px;font-weight:600;color:#1d4ed8">¡Pago confirmado!</span>
+    // Email al comprador
+    if (order.customer_email) {
+      const name = order.customer_name?.split(" ")[0] || "ahí";
+      const html = baseLayout(`
+        <div style="display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+          <span style="font-size:20px">💳</span>
+          <span style="font-size:14px;font-weight:600;color:#1d4ed8">¡Pago confirmado!</span>
+        </div>
+
+        <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">¡Gracias, ${name}!</h2>
+        <p style="margin:0 0 6px;font-size:15px;color:#374151">
+          Recibimos tu pago para el pedido <strong style="color:${BRAND}">#${order.numero}</strong>. 🎉
+          El vendedor ya fue notificado y está preparando tu pedido.
+        </p>
+
+        ${itemsTable(order.items)}
+        ${totalBlock(Number(order.total), Number(order.shipping_amount))}
+
+        <div style="margin-top:24px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 18px">
+          <p style="margin:0;font-size:13px;color:#15803d;font-weight:600">¿Qué sigue?</p>
+          <p style="margin:6px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
+            El vendedor se comunicará con vos para coordinar la entrega o el retiro.
+          </p>
+        </div>
+      `);
+
+      await transporter.sendMail({
+        from: FROM,
+        to:      order.customer_email,
+        subject: `💳 Pago confirmado — Pedido #${order.numero}`,
+        html,
+      });
+    }
+
+    // Email al vendedor (revendedor)
+    if (order.seller_id) {
+      const { rows: sellerRows } = await pool.query(
+        `SELECT email, name FROM sellers WHERE id = $1`,
+        [order.seller_id]
+      );
+      const seller = sellerRows[0];
+      if (seller?.email) {
+        const html = baseLayout(`
+          <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+            <span style="font-size:20px">🎉</span>
+            <span style="font-size:14px;font-weight:600;color:#15803d">¡Pago confirmado!</span>
+          </div>
+
+          <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${seller.name ? `, ${seller.name.split(" ")[0]}` : ""}! Tenés una nueva venta.</h2>
+          <p style="margin:0 0 6px;font-size:15px;color:#374151">
+            El pago del pedido <strong style="color:${BRAND}">#${order.numero}</strong> fue confirmado por MercadoPago.
+            El comprador es <strong>${order.customer_name}</strong>.
+          </p>
+
+          ${itemsTable(order.items)}
+          ${totalBlock(Number(order.total), Number(order.shipping_amount))}
+
+          <div style="margin-top:24px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:16px 18px">
+            <p style="margin:0;font-size:13px;color:#5b21b6;font-weight:600">Próximos pasos</p>
+            <p style="margin:6px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
+              Coordiná la entrega con el comprador. Revisá tu panel en ventaz.com.ar para ver el detalle completo.
+            </p>
+          </div>
+        `);
+
+        await transporter.sendMail({
+          from: FROM,
+          to:      seller.email,
+          subject: `🎉 Nueva venta confirmada — Pedido #${order.numero}`,
+          html,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[email] sendPaymentConfirmed error:", err.message);
+  }
+}
+
+// ── Email 3: nueva venta → vendedor (al crear el checkout, antes del pago) ──
+
+export async function sendSellerOrderPending({ sellerId, order, items, shippingAmount = 0 }) {
+  if (!sellerId) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT email, name FROM sellers WHERE id = $1`,
+      [sellerId]
+    );
+    const seller = rows[0];
+    if (!seller?.email) return;
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🛒</span>
+        <span style="font-size:14px;font-weight:600;color:#92400e">Nuevo pedido iniciado</span>
       </div>
 
-      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">¡Gracias, ${name}!</h2>
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${seller.name ? `, ${seller.name.split(" ")[0]}` : ""}!</h2>
       <p style="margin:0 0 6px;font-size:15px;color:#374151">
-        Recibimos tu pago para el pedido <strong style="color:${BRAND}">#${order.numero}</strong>. 🎉
-        El vendedor ya fue notificado y está preparando tu pedido.
+        Se inició el pedido <strong style="color:${BRAND}">#${order.numero}</strong>.
+        El comprador está completando el pago. Te avisamos cuando se confirme.
       </p>
 
-      ${itemsTable(order.items)}
-      ${totalBlock(Number(order.total), Number(order.shipping_amount))}
-
-      <div style="margin-top:24px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 18px">
-        <p style="margin:0;font-size:13px;color:#15803d;font-weight:600">¿Qué sigue?</p>
-        <p style="margin:6px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
-          El vendedor se comunicará con vos para coordinar la entrega o el retiro.
-          Ante cualquier duda podés responder este mail.
-        </p>
-      </div>
+      ${itemsTable(items)}
+      ${totalBlock(order.total ?? (items.reduce((s,i) => s + (i.unit_price ?? i.unit_price_final) * i.quantity, 0) + shippingAmount), shippingAmount)}
     `);
 
     await transporter.sendMail({
-      from,
-      to:      order.customer_email,
-      subject: `💳 Pago confirmado — Pedido #${order.numero}`,
+      from: FROM,
+      to:      seller.email,
+      subject: `🛒 Pedido #${order.numero} iniciado — esperando pago`,
       html,
     });
-  } catch {
-    // Email failure must never break the order flow
+  } catch (err) {
+    console.error("[email] sendSellerOrderPending error:", err.message);
   }
 }
