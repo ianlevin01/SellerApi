@@ -134,12 +134,13 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     platformPct,
   });
 
-  // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo
-  const allFreeShipping = enrichedItems.length > 0 && enrichedItems.every(i => i.free_shipping);
-  const costoEnvio      = Number(page.costo_envio || 0);
-  const freeShippingAbsorbed = allFreeShipping ? costoEnvio : 0;
+  // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo real del envío
+  const allFreeShipping      = enrichedItems.length > 0 && enrichedItems.every(i => i.free_shipping);
+  const realShippingCost     = Number(shipping?.amount || 0);
+  const freeShippingAbsorbed = allFreeShipping ? realShippingCost : 0;
 
-  const shippingAmount = allFreeShipping ? 0 : (shipping ? Number(shipping.amount || 0) : 0);
+  // El comprador paga $0 de envío cuando todos los productos tienen envío gratis
+  const shippingAmount = allFreeShipping ? 0 : realShippingCost;
   const total          = productsTotal + shippingAmount;
 
   // 7. Crear la orden en la BD (estado pendiente hasta que MP confirme)

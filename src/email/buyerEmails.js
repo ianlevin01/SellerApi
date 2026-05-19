@@ -2,8 +2,8 @@ import { transporter } from "../config/mailer.js";
 import pool from "../database/db.js";
 
 const FROM    = process.env.SMTP_FROM || "noreply@ventaz.online";
-const BRAND   = "#6366f1";
-const BRAND_D = "#4f46e5";
+const BRAND   = "#4db81a";
+const BRAND_D = "#3a9a15";
 
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString("es-AR", { maximumFractionDigits: 0 })}`;
