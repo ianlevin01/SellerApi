@@ -3,7 +3,7 @@ import pool from "../database/db.js";
 export async function findByPage(pageId, sellerId) {
   const { rows } = await pool.query(`
     SELECT
-      c.id, c.name, c.description, c.custom_price, c.free_shipping, c.active, c.created_at,
+      c.id, c.name, c.description, c.custom_price, c.promo_price, c.promo_enabled, c.free_shipping, c.active, c.created_at,
       COALESCE(
         (SELECT json_agg(json_build_object(
            'product_id', cp.product_id,
@@ -30,7 +30,7 @@ export async function findByPage(pageId, sellerId) {
 export async function findPublicByPage(pageId) {
   const { rows } = await pool.query(`
     SELECT
-      c.id, c.name, c.description, c.custom_price, c.free_shipping,
+      c.id, c.name, c.description, c.custom_price, c.promo_price, c.promo_enabled, c.free_shipping,
       COALESCE(
         (SELECT json_agg(json_build_object(
            'product_id', cp.product_id,
@@ -85,7 +85,7 @@ export async function create(pageId, sellerId, { name, description, custom_price
   }
 }
 
-export async function update(comboId, sellerId, { name, description, custom_price, active, free_shipping, products }) {
+export async function update(comboId, sellerId, { name, description, custom_price, active, free_shipping, promo_price, promo_enabled, products }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -96,10 +96,14 @@ export async function update(comboId, sellerId, { name, description, custom_pric
          custom_price  = COALESCE($3, custom_price),
          active        = COALESCE($4, active),
          free_shipping = COALESCE($5, free_shipping),
+         promo_price   = $8,
+         promo_enabled = COALESCE($9, promo_enabled),
          updated_at    = now()
        WHERE id = $6 AND seller_id = $7`,
       [name, description !== undefined ? description : null, custom_price, active,
-       free_shipping !== undefined ? free_shipping : null, comboId, sellerId]
+       free_shipping !== undefined ? free_shipping : null, comboId, sellerId,
+       promo_price !== undefined ? promo_price : null,
+       promo_enabled !== undefined ? promo_enabled : null]
     );
     if (products !== undefined) {
       await client.query(`DELETE FROM combo_products WHERE combo_id = $1`, [comboId]);
@@ -129,7 +133,7 @@ export async function remove(comboId, sellerId) {
 export async function findById(comboId, sellerId) {
   const { rows } = await pool.query(`
     SELECT
-      c.id, c.name, c.description, c.custom_price, c.free_shipping, c.active, c.created_at,
+      c.id, c.name, c.description, c.custom_price, c.promo_price, c.promo_enabled, c.free_shipping, c.active, c.created_at,
       COALESCE(
         (SELECT json_agg(json_build_object(
            'product_id', cp.product_id,

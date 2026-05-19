@@ -7,15 +7,15 @@ export function getSellerPlatformPct(totalSalesARS) {
   return BASE_PCT;
 }
 
-// Costo mostrado al revendedor: cost_usd × cotizacion × 1.20 × (1 + platformPct/100)
+// Costo mostrado al revendedor: cost_usd × cotizacion × 1.10 × (1 + platformPct/100)
 export function calcShownCost(costUsd, cotizacion, platformPct) {
-  return Number(costUsd) * Number(cotizacion) * 1.20 * (1 + platformPct / 100);
+  return Number(costUsd) * Number(cotizacion) * 1.10 * (1 + platformPct / 100);
 }
 
 // Ahorro por unidad respecto al tier base (30%)
 export function calcSavingsVsBase(costUsd, cotizacion, platformPct) {
   if (platformPct >= BASE_PCT) return 0;
-  return Number(costUsd) * Number(cotizacion) * 1.20 * (BASE_PCT - platformPct) / 100;
+  return Number(costUsd) * Number(cotizacion) * 1.10 * (BASE_PCT - platformPct) / 100;
 }
 
 // Info del siguiente tier para mostrar al vendedor
@@ -32,7 +32,7 @@ export function getNextTierInfo(totalSalesARS, platformPct) {
   return {
     threshold:     nextThreshold,
     remaining:     Math.max(0, nextThreshold - totalSalesARS),
-    currentFactor: 1.20 * (1 + platformPct  / 100),
-    nextFactor:    1.20 * (1 + nextPct / 100),
+    currentFactor: 1.10 * (1 + platformPct  / 100),
+    nextFactor:    1.10 * (1 + nextPct / 100),
   };
 }

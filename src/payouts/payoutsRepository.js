@@ -131,7 +131,8 @@ export async function getOrderForEarning(webOrderId) {
               (SELECT json_agg(json_build_object(
                 'product_id', woi.product_id,
                 'quantity',   woi.quantity,
-                'unit_price', woi.unit_price
+                'unit_price', woi.unit_price,
+                'unit_cost',  woi.unit_cost
               )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
               '[]'
             ) AS items
@@ -153,4 +154,14 @@ export async function getCostUsdForProduct(productId) {
 export async function getCotizacion() {
   const { rows } = await pool.query(`SELECT cotizacion_dolar FROM price_config LIMIT 1`);
   return Number(rows[0]?.cotizacion_dolar || 1);
+}
+
+export async function getSellerTotalSales(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(total), 0) AS total_sales
+     FROM web_orders
+     WHERE seller_id = $1 AND color = 'paid'`,
+    [sellerId]
+  );
+  return Number(rows[0]?.total_sales || 0);
 }

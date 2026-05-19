@@ -1,4 +1,7 @@
 import pool from "../database/db.js";
+import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
+
+const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[]`;
 
 // ── Dashboard ────────────────────────────────────────────────
 
@@ -228,6 +231,7 @@ export async function getAllProducts() {
            COALESCE((SELECT s.quantity FROM stock s WHERE s.product_id = p.id LIMIT 1), 0) AS stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
+    WHERE p.negocio_id = ANY(${NEGOCIOS_SQL})
     ORDER BY p.name`);
   return rows;
 }

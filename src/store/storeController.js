@@ -23,7 +23,7 @@ export async function getOrders(req, res) {
 
 export async function getMyTierInfo(req, res) {
   try {
-    return res.json(await storeService.getMyTierInfo(req.seller.id));
+    return res.json(await storeService.getMyTierInfo());
   } catch (err) { handleError(res, err); }
 }
 

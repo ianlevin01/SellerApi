@@ -1,4 +1,5 @@
 import * as repo from "./payoutsRepository.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -104,23 +105,39 @@ export async function calculateEarningForOrder(webOrderId) {
   const order = await repo.getOrderForEarning(webOrderId);
   if (!order) return 0;
 
-  const cotizacion = await repo.getCotizacion();
-  let ganancia_bruta = 0;
+  // El tier depende del total de ESTE pedido (no del historial acumulado)
+  const platformPct = getSellerPlatformPct(Number(order.total));
+
+  // Cotización solo se necesita como fallback para órdenes antiguas sin unit_cost
+  let cotizacion = null;
+
+  let ganancia = 0;
 
   for (const item of order.items) {
     if (!item.product_id) continue;
-    const costUsd    = await repo.getCostUsdForProduct(item.product_id);
-    const base120    = costUsd * cotizacion * 1.20;
-    const diferencia = Number(item.unit_price) - base120;
-    if (diferencia > 0) ganancia_bruta += diferencia * item.quantity;
+
+    let baseCost;
+    if (item.unit_cost != null) {
+      // Costo bloqueado al momento del checkout (tier 30% con la cotización de ese día)
+      baseCost = Number(item.unit_cost);
+    } else {
+      // Fallback para órdenes anteriores a la migración 018
+      if (cotizacion === null) cotizacion = await repo.getCotizacion();
+      const costUsd = await repo.getCostUsdForProduct(item.product_id);
+      baseCost = calcShownCost(costUsd, cotizacion, 30);
+    }
+
+    // Ajustar baseCost al tier real del pedido:
+    // baseCost = costo × cotizacion × 1.10 × 1.30
+    // adjustedCost = costo × cotizacion × 1.10 × (1 + platformPct/100)
+    //              = baseCost × (1 + platformPct/100) / 1.30
+    const adjustedCost = baseCost * (1 + platformPct / 100) / 1.30;
+    const diferencia   = Number(item.unit_price) - adjustedCost;
+    if (diferencia > 0) ganancia += diferencia * item.quantity;
   }
 
-  const total                = Number(order.total);
-  const pct_ganancia         = getPctGanancia(total);
   const freeShippingAbsorbed = Number(order.free_shipping_absorbed || 0);
-  const ganancia_vendedor    = ganancia_bruta * pct_ganancia - freeShippingAbsorbed;
-
-  return Math.max(0, Number(ganancia_vendedor.toFixed(2)));
+  return Math.max(0, Number((ganancia - freeShippingAbsorbed).toFixed(2)));
 }
 
 export async function createEarningForOrder(webOrderId) {

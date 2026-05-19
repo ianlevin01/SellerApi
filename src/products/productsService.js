@@ -1,21 +1,19 @@
 // src/modules/products/productsService.js
 import * as productsRepository from "./productsRepository.js";
-import { getCotizacion, getPageById, getSellerTotalSales } from "../store/storeRepository.js";
+import { getCotizacion, getPageById } from "../store/storeRepository.js";
 import { signKeys } from "../utils/s3Client.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { calcShownCost } from "../utils/pricing.js";
 
 export async function getProduct(pageId, sellerId, productId) {
-  const [row, cotizacion, totalSales] = await Promise.all([
+  const [row, cotizacion] = await Promise.all([
     productsRepository.findById(pageId, sellerId, productId),
     getCotizacion(),
-    getSellerTotalSales(sellerId),
   ]);
   if (!row) throw { status: 404, message: "Producto no encontrado" };
-  const platformPct = getSellerPlatformPct(totalSales);
   return {
     ...row,
-    precio_1:           row.costo_usd ? calcShownCost(row.costo_usd, cotizacion, platformPct) : null,
-    platform_margin_pct: platformPct,
+    precio_1:           row.costo_usd ? calcShownCost(row.costo_usd, cotizacion, 30) : null,
+    platform_margin_pct: 30,
     custom_price:        row.custom_price ? Number(row.custom_price) : null,
     system_images:       await signKeys(row.system_images || []),
     seller_images:       await signKeys(row.seller_images || []),
@@ -26,19 +24,17 @@ export async function getProducts(pageId, sellerId, filters) {
   const limit  = Math.min(Number(filters.limit) || 20, 500);
   const offset = Number(filters.offset) || 0;
 
-  const [{ rows, total }, cotizacion, totalSales] = await Promise.all([
+  const [{ rows, total }, cotizacion] = await Promise.all([
     productsRepository.findAll({ pageId, sellerId, ...filters, limit, offset }),
     getCotizacion(),
-    getSellerTotalSales(sellerId),
   ]);
-  const platformPct = getSellerPlatformPct(totalSales);
 
   const products = await Promise.all(rows.map(async p => {
-    const precio_1 = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct) : null;
+    const precio_1 = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, 30) : null;
     return {
       ...p,
       precio_1,
-      platform_margin_pct: platformPct,
+      platform_margin_pct: 30,
       custom_price:  p.custom_price ? Number(p.custom_price) : null,
       system_images: await signKeys(p.system_images || []),
       seller_images: await signKeys(p.seller_images || []),

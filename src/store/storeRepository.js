@@ -1,5 +1,8 @@
 // src/modules/store/storeRepository.j
 import pool from "../database/db.js"
+import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
+
+const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[]`;
 // ── Cotización ────────────────────────────────────────────────
 
 export async function getCotizacion() {
@@ -51,7 +54,7 @@ export async function createPage(sellerId, { page_name, slug, store_name, store_
   return rows[0];
 }
 
-export async function updatePage(pageId, sellerId, { slug, page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config, costo_envio }) {
+export async function updatePage(pageId, sellerId, { slug, page_name, store_name, store_description, banner_color, pct_markup, tagline, whatsapp, instagram, facebook, logo_url, font_family, color_secondary, color_bg, color_text, featured_categories, card_border_radius, card_show_shadow, hero_headline, hero_image_url, promo_text, show_promo_bar, theme_config, costo_envio, favicon_url, og_image_url, meta_title, meta_description, tiktok, youtube }) {
   const e = v => (v === "" ? null : (v ?? null));
   const { rows } = await pool.query(
     `UPDATE seller_pages
@@ -79,6 +82,12 @@ export async function updatePage(pageId, sellerId, { slug, page_name, store_name
          show_promo_bar      = COALESCE($24, show_promo_bar),
          theme_config        = COALESCE($25::jsonb, theme_config),
          costo_envio         = COALESCE($26, costo_envio),
+         favicon_url         = $27,
+         og_image_url        = $28,
+         meta_title          = $29,
+         meta_description    = $30,
+         tiktok              = $31,
+         youtube             = $32,
          updated_at          = now()
      WHERE id = $6 AND seller_id = $7
      RETURNING *`,
@@ -93,7 +102,9 @@ export async function updatePage(pageId, sellerId, { slug, page_name, store_name
      e(hero_headline), e(hero_image_url), e(promo_text),
      show_promo_bar != null ? Boolean(show_promo_bar) : null,
      theme_config != null ? JSON.stringify(theme_config) : null,
-     costo_envio != null ? Number(costo_envio) : null]
+     costo_envio != null ? Number(costo_envio) : null,
+     e(favicon_url), e(og_image_url), e(meta_title), e(meta_description),
+     e(tiktok), e(youtube)]
   );
   return rows[0];
 }
@@ -107,7 +118,9 @@ export async function deletePage(pageId, sellerId) {
 }
 
 export async function getCategories() {
-  const { rows } = await pool.query(`SELECT id, name FROM categories ORDER BY name ASC`);
+  const { rows } = await pool.query(
+    `SELECT id, name FROM categories WHERE negocio_id = ANY(${NEGOCIOS_SQL}) ORDER BY name ASC`
+  );
   return rows;
 }
 
@@ -135,6 +148,7 @@ export async function getOrders(sellerId) {
        wo.id, wo.numero, wo.customer_name, wo.customer_email,
        wo.customer_city, wo.total,
        COALESCE(wo.shipping_amount, 0) AS shipping_amount,
+       COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
        wo.color, wo.created_at, wo.order_id,
        COALESCE(
          (SELECT json_agg(json_build_object(
@@ -202,6 +216,7 @@ export async function getPublicProducts(pageId, sellerId) {
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
+       AND p.negocio_id = ANY(${NEGOCIOS_SQL})
        AND CASE
          WHEN (
            COALESCE(p.costo_usd, 0)

@@ -5,6 +5,7 @@ import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { sendOrderReceived, sendPaymentConfirmed } from "../email/buyerEmails.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -103,12 +104,9 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     throw err;
   }
 
-  // 2. Cotización del dólar + tier del vendedor (en paralelo)
-  const [cotizacion, totalSales] = await Promise.all([
-    repo.getCotizacionDolar(),
-    repo.getSellerTotalSales(page.seller_id),
-  ]);
-  const platformPct = getSellerPlatformPct(totalSales);
+  // 2. Cotización del dólar — el tier se calcula después, una vez que conocemos el total del pedido
+  const cotizacion  = await repo.getCotizacionDolar();
+  const platformPct = 30; // siempre 30% para calcular el precio base mostrado al vendedor
 
   // 3. Productos
   const products = await repo.getProductsByIds(
@@ -154,7 +152,15 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     free_shipping_absorbed: freeShippingAbsorbed,
   });
 
-  // 8. Guardar detalle de envío y registrar en MiCorreo (en background, no bloquea)
+  // 8. Email al comprador: pedido recibido (background, no bloquea)
+  sendOrderReceived({
+    customer,
+    order,
+    items: enrichedItems,
+    shippingAmount,
+  });
+
+  // 9. Guardar detalle de envío y registrar en MiCorreo (en background, no bloquea)
   if (shipping) {
     shippingRepository.saveOrderShipping(order.id, shipping)
       .catch(err => console.error("[shipping] saveOrderShipping error:", err.message));
@@ -197,13 +203,31 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     });
   }
 
+  // Split phone into area code + number (Argentina: first 2-3 digits are area code)
+  const rawPhone     = (customer.phone ?? "").replace(/\D/g, "");
+  const phoneArea    = rawPhone.length >= 10 ? rawPhone.slice(0, rawPhone.length - 8) : "11";
+  const phoneNumber  = rawPhone.length >= 8  ? rawPhone.slice(-8) : (rawPhone || "0");
+
   const preferenceBody = {
     external_reference: String(order.id),
+    binary_mode: true,
+    statement_descriptor: "VENTAZ",
     items: mpItems,
     payer: {
       name:  customer.name || `${customer.firstName || ""} ${customer.lastName || ""}`.trim(),
       email: customer.email,
-      phone: { number: (customer.phone ?? "").replace(/\D/g, "") || "0" },
+      phone: { area_code: phoneArea, number: phoneNumber },
+      address: {
+        zip_code:      customer.postal_code || shipping?.postal_code || "",
+        street_name:   customer.street      || shipping?.street      || "",
+        street_number: customer.street_number ? Number(customer.street_number) : 0,
+      },
+    },
+    metadata: {
+      order_id:    String(order.id),
+      order_num:   String(order.numero),
+      seller_id:   String(page.seller_id),
+      store_slug:  slug,
     },
     ...(storeDomain ? {
       back_urls: {
@@ -257,6 +281,7 @@ export async function confirmPayment(paymentId) {
     if (newStatus === "paid") {
       payoutsService.createEarningForOrder(payment.external_reference)
         .catch(err => console.error("[payouts] createEarning error:", err.message));
+      sendPaymentConfirmed(payment.external_reference);
     }
   }
 
@@ -308,5 +333,6 @@ export async function handleWebhook(query, body) {
   if (newStatus === "paid") {
     payoutsService.createEarningForOrder(orderId)
       .catch(err => console.error("[payouts] createEarning error:", err.message));
+    sendPaymentConfirmed(orderId);
   }
 }

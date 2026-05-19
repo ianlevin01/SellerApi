@@ -6,7 +6,8 @@ import * as combosService          from "../combos/combosService.js";
 import * as integrationsRepository from "../integrations/integrationsRepository.js";
 import { signKey, signKeys }       from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
-import { getSellerPlatformPct, calcShownCost, calcSavingsVsBase, getNextTierInfo } from "../utils/pricing.js";
+import { sendOrderReceived } from "../email/buyerEmails.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 
 function isHttpUrl(value) {
@@ -190,6 +191,7 @@ export async function updatePageConfig(pageId, sellerId, body) {
     card_border_radius, card_show_shadow,
     hero_headline, hero_image_url, promo_text, show_promo_bar,
     theme_config, costo_envio,
+    favicon_url, og_image_url, meta_title, meta_description, tiktok, youtube,
   } = body;
   if (slug !== undefined) {
     if (!slug || !/^[a-z0-9-]+$/.test(slug))
@@ -206,6 +208,9 @@ export async function updatePageConfig(pageId, sellerId, body) {
     hero_image_url: normalizeStoreAssetValue(hero_image_url),
     promo_text, show_promo_bar,
     theme_config, costo_envio,
+    favicon_url: normalizeStoreAssetValue(favicon_url),
+    og_image_url: normalizeStoreAssetValue(og_image_url),
+    meta_title, meta_description, tiktok, youtube,
   });
   if (!updated) throw { status: 404, message: "Página no encontrada" };
   return await withResolvedPageAssets(updated);
@@ -230,26 +235,24 @@ export async function getConfig(sellerId) {
 export async function getOrders(sellerId) {
   const orders = await storeRepository.getOrders(sellerId);
 
-  const [cotizacion, totalSales] = await Promise.all([
-    storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(sellerId),
-  ]);
-  const platformPct = getSellerPlatformPct(totalSales);
+  const cotizacion = await storeRepository.getCotizacion();
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
-    let ganancia_vendedor = 0;
-    let ahorro_vendedor   = 0;
+    const orderPlatformPct = getSellerPlatformPct(Number(order.total));
+    let ganancia_vendedor  = 0;
 
     for (const item of order.items) {
       if (!item.product_id) continue;
       const costUsd    = await storeRepository.getCostUsdForProduct(item.product_id);
-      const shownCost  = calcShownCost(costUsd, cotizacion, platformPct);
+      const shownCost  = calcShownCost(costUsd, cotizacion, orderPlatformPct);
       const diferencia = Number(item.unit_price) - shownCost;
       if (diferencia > 0) ganancia_vendedor += diferencia * item.quantity;
-      ahorro_vendedor += calcSavingsVsBase(costUsd, cotizacion, platformPct) * item.quantity;
     }
 
-    return { ...order, ganancia_vendedor, ahorro_vendedor };
+    const freeShippingAbsorbed = Number(order.free_shipping_absorbed || 0);
+    ganancia_vendedor = Math.max(0, ganancia_vendedor - freeShippingAbsorbed);
+
+    return { ...order, ganancia_vendedor };
   }));
 
   return withGanancia;
@@ -269,8 +272,7 @@ export async function getPublicStore(slug) {
     combosService.getPublicCombos(page.id).catch(() => []),
     integrationsRepository.getPublicConfigs(page.id).catch(() => ({})),
   ]);
-  const sellerTotalSales = await storeRepository.getSellerTotalSales(page.seller_id);
-  const platformPct      = getSellerPlatformPct(sellerTotalSales);
+  const platformPct = 30; // siempre base 30% para mostrar precio_1 (el tier aplica al calcular ganancias, no precios)
 
   const productsWithPrice = await Promise.all(products.map(async p => {
     const precio_1     = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct) : null;
@@ -366,11 +368,8 @@ export async function createCheckout(slug, { customer, items }) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
-  const [cotizacion, totalSales] = await Promise.all([
-    storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(page.seller_id),
-  ]);
-  const platformPct = getSellerPlatformPct(totalSales);
+  const cotizacion  = await storeRepository.getCotizacion();
+  const platformPct = 30; // precio base siempre con tier 30%
 
   let realTotal = 0;
   const pricedItems = [];
@@ -390,6 +389,7 @@ export async function createCheckout(slug, { customer, items }) {
   });
   await storeRepository.createOrderItems(order.id, pricedItems);
   notifySellerNewOrder(page.seller_id, { ...order, total: realTotal }, pricedItems);
+  sendOrderReceived({ customer, order: { ...order, total: realTotal }, items: pricedItems });
 
   return { numero: order.numero, order_number: order.numero };
 }
@@ -421,13 +421,11 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
 
-  const [cotizacion, totalSales, costUsd] = await Promise.all([
+  const [cotizacion, costUsd] = await Promise.all([
     storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(sellerId),
     storeRepository.getCostUsdForProduct(productId),
   ]);
-  const platformPct = getSellerPlatformPct(totalSales);
-  const precio1     = calcShownCost(costUsd, cotizacion, platformPct);
+  const precio1 = calcShownCost(costUsd, cotizacion, 30);
 
   if (precio1 > 0 && Number(customPrice) < precio1 - 0.01)
     throw { status: 400, message: `El precio mínimo para este producto es $${Math.ceil(precio1)}` };
@@ -444,14 +442,12 @@ export async function setProductPromo(pageId, sellerId, productId, promoPrice, p
     if (!promoPrice || Number(promoPrice) <= 0)
       throw { status: 400, message: "El precio promocional debe ser mayor a 0" };
 
-    const [cotizacion, totalSales, costUsd, sellerProduct] = await Promise.all([
+    const [cotizacion, costUsd, sellerProduct] = await Promise.all([
       storeRepository.getCotizacion(),
-      storeRepository.getSellerTotalSales(sellerId),
       storeRepository.getCostUsdForProduct(productId),
       storeRepository.getSellerProduct(pageId, productId),
     ]);
-    const platformPct = getSellerPlatformPct(totalSales);
-    const precio1 = calcShownCost(costUsd, cotizacion, platformPct);
+    const precio1 = calcShownCost(costUsd, cotizacion, 30);
 
     if (precio1 > 0 && Number(promoPrice) < precio1 - 0.01)
       throw { status: 400, message: `El precio promo mínimo es $${Math.ceil(precio1)}` };
@@ -465,19 +461,9 @@ export async function setProductPromo(pageId, sellerId, productId, promoPrice, p
   return { message: "Promoción actualizada" };
 }
 
-export async function getMyTierInfo(sellerId) {
-  const [cotizacion, totalSales] = await Promise.all([
-    storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(sellerId),
-  ]);
-  const platformPct = getSellerPlatformPct(totalSales);
-  const nextTier    = getNextTierInfo(totalSales, platformPct);
-  return {
-    totalSales,
-    isMaxTier:     !nextTier,
-    currentFactor: 1.20 * (1 + platformPct / 100),
-    ...(nextTier ?? {}),
-  };
+export async function getMyTierInfo() {
+  const cotizacion = await storeRepository.getCotizacion();
+  return { cotizacion };
 }
 
 export async function createPublicOrder(slug, { customer, items }) {
@@ -489,11 +475,7 @@ export async function createPublicOrder(slug, { customer, items }) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
-  const [cotizacion, totalSales] = await Promise.all([
-    storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(page.seller_id),
-  ]);
-  const platformPct = getSellerPlatformPct(totalSales);
+  const cotizacion = await storeRepository.getCotizacion();
 
   let realTotal = 0;
   const pricedItems = [];
@@ -502,7 +484,7 @@ export async function createPublicOrder(slug, { customer, items }) {
       storeRepository.getCostUsdForProduct(item.product_id),
       storeRepository.getSellerProduct(page.id, item.product_id),
     ]);
-    const precioBase  = calcShownCost(costUsd, cotizacion, platformPct);
+    const precioBase  = calcShownCost(costUsd, cotizacion, 30);
     const unitPrice   = sellerProduct?.custom_price ? Number(sellerProduct.custom_price) : precioBase;
     realTotal += unitPrice * item.quantity;
     pricedItems.push({ product_id: item.product_id, name: item.name, quantity: item.quantity, unit_price: unitPrice });
@@ -513,6 +495,7 @@ export async function createPublicOrder(slug, { customer, items }) {
   });
   await storeRepository.createOrderItems(order.id, pricedItems);
   notifySellerNewOrder(page.seller_id, { ...order, total: realTotal }, pricedItems);
+  sendOrderReceived({ customer, order: { ...order, total: realTotal }, items: pricedItems });
 
   return { message: "Pedido recibido", numero: order.numero };
 }

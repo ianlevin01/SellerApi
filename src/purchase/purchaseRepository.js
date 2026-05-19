@@ -91,8 +91,8 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
       await client.query(
         `
         INSERT INTO web_order_items
-          (web_order_id, product_id, name, quantity, unit_price)
-        VALUES ($1, $2, $3, $4, $5)
+          (web_order_id, product_id, name, quantity, unit_price, unit_cost)
+        VALUES ($1, $2, $3, $4, $5, $6)
         `,
         [
           order.id,
@@ -100,6 +100,7 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
           item.name,
           item.quantity,
           item.unit_price_final,
+          item.unit_price_base ?? null,
         ]
       );
     }

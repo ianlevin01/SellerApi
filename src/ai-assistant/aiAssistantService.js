@@ -1,13 +1,16 @@
 import OpenAI from "openai";
 import pool from "../database/db.js";
 import { calcShownCost, getSellerPlatformPct } from "../utils/pricing.js";
+import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
+
+const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[]`;
 
 // ── System prompt ─────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
 Sos Taz, el asistente virtual de Ventaz para vendedores. Respondés siempre en español argentino (usando "vos", etc.). Sos claro, amigable y directo al punto. Nunca inventás funcionalidades que no existen en el sistema.
 
-Cuando el vendedor te pregunta algo sobre sus productos, el catálogo, stock o precios, SIEMPRE usá las funciones disponibles para traer datos reales antes de responder. No inventes datos.
+Cuando el vendedor te pregunta algo sobre sus productos, combos, catálogo, stock o precios, SIEMPRE usá las funciones disponibles para traer datos reales antes de responder. No inventes datos.
 
 ══════════════════════════════════════════
 QUÉ ES VENTAZ
@@ -20,28 +23,41 @@ PANEL DE CONTROL — SECCIONES
 
 1. DASHBOARD (/dashboard) — Resumen visual de ventas, ganancias y pedidos recientes.
 
-2. MIS TIENDAS (/pages) — Podés tener una o más tiendas activas. Cada tienda tiene nombre, URL propia (slug), descripción, colores, fuente, redes sociales. Dentro de cada tienda hay pestañas: Configuración, Productos y Descuentos.
+2. MIS TIENDAS (/pages) — Podés tener una o más tiendas activas. Cada tienda tiene nombre, URL propia (slug), descripción, colores, fuente, redes sociales. Dentro de cada tienda hay pestañas: Configuración, Productos, Descuentos y Combos.
 
-3. PRODUCTOS (dentro de cada tienda) — Agregá productos del catálogo, personalizá nombre/descripción, subí fotos propias, fijá tu precio de venta. Hay un precio mínimo que no podés bajar (calculado automáticamente).
+3. PRODUCTOS (dentro de cada tienda) — Agregá productos del catálogo, personalizá nombre/descripción, subí fotos propias, fijá tu precio de venta. Hay un precio mínimo que no podés bajar (calculado según el costo del producto más la comisión). Con envío gratis activado, el precio mínimo sube $15.000 para absorber el costo de envío. También podés configurar un precio promo (más bajo que el precio regular) que aparece con un badge especial en la tienda.
 
-4. DESCUENTOS (pestaña dentro de cada tienda) — Descuentos progresivos:
+4. COMBOS (pestaña dentro de cada tienda) — Podés crear packs o combos que agrupan varios productos en un solo precio. Cada combo tiene nombre, precio (mínimo igual a la suma de los precios mínimos de sus productos), descripción, fotos, y puede tener envío gratis y precio promo. Los combos aparecen destacados en la tienda.
+
+5. DESCUENTOS (pestaña dentro de cada tienda) — Descuentos progresivos:
    - Por CANTIDAD: cuando el cliente compra X o más unidades → N% de descuento.
    - Por MONTO: cuando el total supera $X → N% de descuento.
 
-5. MIS PEDIDOS (/orders) — Ver todos los pedidos. Estados: Pendiente, Pagado, En proceso, Con problema.
-   Niveles de comisión (afectan tu ganancia):
-   - Base: hasta $100.000 en ventas → comisión 30%
-   - Plata: $100.001–$250.000 → comisión 27.5%
-   - Oro: $250.001–$500.000 → comisión 22%
-   - Diamante: más de $500.000 → comisión 20%
+6. MIS PEDIDOS (/orders) — Ver todos los pedidos. Estados: Pendiente, Pagado, En proceso, Con problema.
+   Niveles de comisión según el monto total de ventas acumuladas:
+   - Base: hasta $100.000 acumulados → comisión 30%
+   - Plata: $100.001–$250.000 acumulados → comisión 27.5%
+   - Oro: $250.001–$500.000 acumulados → comisión 22%
+   - Diamante: más de $500.000 acumulados → comisión 20%
+   (A mayor volumen de ventas acumuladas, menor comisión y mayor ganancia.)
 
-6. COBROS (/cobros) — Ganancias acumuladas, solicitar transferencia a tu cuenta. Necesitás registrar tu CVU/CBU y que Ventaz lo verifique.
+7. COBROS (/cobros) — Ganancias acumuladas, solicitar transferencia a tu cuenta. Necesitás registrar tu CVU/CBU y que Ventaz lo verifique.
 
-7. CHAT (/chat) — Chat en tiempo real con tus clientes.
+8. CHAT (/chat) — Tiene dos pestañas:
+   - "Mis clientes": chat en tiempo real con los clientes que compran en tu tienda.
+   - "Equipo Ventaz": mensajes directos del equipo de Ventaz. Si Ventaz te manda una notificación o necesita contactarte, aparece acá.
 
-8. CALCULADORA (/calculator) — Simulá precios y ganancias antes de publicar.
+9. CALCULADORA (/calculator) — Simulá precios y ganancias antes de publicar.
 
-9. MI PERFIL (/profile) — Editá nombre, teléfono, ciudad.
+10. MI PERFIL (/profile) — Editá nombre, teléfono, ciudad.
+
+══════════════════════════════════════════
+PRECIOS Y GANANCIA
+══════════════════════════════════════════
+- Precio mínimo (precio_1): calculado automáticamente a partir del costo del producto en USD × cotización del dólar × comisión de plataforma. No podés vender por debajo de ese valor.
+- Con envío gratis activado: el precio mínimo sube $15.000 adicionales para cubrir el costo del envío.
+- Precio promo: podés poner un precio de oferta temporal menor al precio regular. Aparece con badge "Precio promo" en tu tienda. También debe ser mayor al precio mínimo.
+- Tu ganancia = precio de venta − precio mínimo.
 
 ══════════════════════════════════════════
 CÓMO VEN TU TIENDA LOS CLIENTES
@@ -51,7 +67,7 @@ URL: TU_SLUG.ventaz.com.ar. Proceso de compra: Carrito → Envío → Datos → 
 ══════════════════════════════════════════
 INSTRUCCIONES PARA RESPONDER
 ══════════════════════════════════════════
-- Ante preguntas sobre productos, precios o stock: usá las funciones para traer datos reales.
+- Ante preguntas sobre productos, combos, precios o stock: usá las funciones para traer datos reales.
 - Si la pregunta no tiene que ver con Ventaz ni con el negocio del vendedor, decí que solo podés ayudar con dudas sobre la plataforma.
 - Si no sabés algo, decilo directamente en vez de inventar.
 - Usá pasos numerados cuando expliques cómo hacer algo.
@@ -111,6 +127,18 @@ const TOOLS = [
     function: {
       name: "get_seller_stats",
       description: "Devuelve las estadísticas del vendedor: total de ventas acumuladas, nivel de comisión, cotización del dólar actual y balance disponible para cobrar. Usá esta función cuando el vendedor pregunte sobre su nivel, sus ventas o cuánto puede cobrar.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_my_combos",
+      description: "Devuelve los combos que el vendedor tiene creados en su tienda, con precio, precio promo, productos incluidos y estado. Usá esta función cuando el vendedor pregunte sobre sus combos o packs.",
       parameters: {
         type: "object",
         properties: {},
@@ -208,7 +236,7 @@ async function toolGetCatalogProducts(ctx, { search, category, only_available } 
       ) AS in_my_store
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.active = true ${whereExtra}
+    WHERE p.active = true AND p.negocio_id = ANY(${NEGOCIOS_SQL}) ${whereExtra}
     ORDER BY p.name
     LIMIT 80
   `, params);
@@ -235,6 +263,42 @@ async function toolGetCatalogProducts(ctx, { search, category, only_available } 
   });
 
   return { total: products.length, productos: products };
+}
+
+async function toolGetMyCombos(ctx) {
+  if (!ctx.pageId) {
+    const { rows: pages } = await pool.query(
+      `SELECT id FROM seller_pages WHERE seller_id = $1 AND active = true LIMIT 1`,
+      [ctx.sellerId]
+    );
+    if (!pages.length) return { message: "No tenés tiendas activas con combos." };
+    ctx = { ...ctx, pageId: pages[0].id };
+  }
+  const { rows } = await pool.query(`
+    SELECT
+      c.id, c.name, c.custom_price, c.promo_price, c.promo_enabled, c.free_shipping, c.active,
+      COALESCE(
+        (SELECT json_agg(json_build_object('nombre', p.name, 'cantidad', cp.quantity) ORDER BY cp.id)
+         FROM combo_products cp JOIN products p ON p.id = cp.product_id
+         WHERE cp.combo_id = c.id), '[]'
+      ) AS products
+    FROM page_combos c
+    WHERE c.seller_id = $1 AND c.page_id = $2
+    ORDER BY c.created_at DESC
+  `, [ctx.sellerId, ctx.pageId]);
+
+  if (!rows.length) return { message: "No tenés combos creados en tu tienda." };
+
+  const combos = rows.map(c => ({
+    nombre:      c.name,
+    precio:      `$${fmt(c.custom_price)}`,
+    precio_promo: c.promo_enabled && c.promo_price ? `$${fmt(c.promo_price)}` : null,
+    envio_gratis: c.free_shipping ? "Sí" : "No",
+    activo:      c.active ? "Sí" : "No",
+    productos:   (c.products || []).map(p => `${p.cantidad > 1 ? `${p.cantidad}× ` : ""}${p.nombre}`).join(", "),
+  }));
+
+  return { total: combos.length, combos };
 }
 
 async function toolGetSellerStats(ctx) {
@@ -346,6 +410,9 @@ export async function chat(messages, sellerContext = null) {
           break;
         case "get_seller_stats":
           result = await toolGetSellerStats(ctx);
+          break;
+        case "get_my_combos":
+          result = await toolGetMyCombos(ctx);
           break;
         default:
           result = { error: "Función no reconocida" };

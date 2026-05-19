@@ -1,5 +1,9 @@
 // src/modules/products/productsRepository.js
 import pool from "../database/db.js"
+import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
+
+// SQL fragment: "p.negocio_id = ANY(ARRAY['uuid1','uuid2']::uuid[])"
+const NEGOCIO_FILTER = `p.negocio_id = ANY(ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[])`;
 
 export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, limit = 20, offset = 0 }) {
   let query = `
@@ -51,7 +55,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       END AS is_low_stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.active = true
+    WHERE p.active = true AND ${NEGOCIO_FILTER}
   `;
 
   const params = [pageId, sellerId];
@@ -95,7 +99,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
   const { rows: countRows } = await pool.query(countQuery, params);
   const total = Number(countRows[0].count);
 
-  query += ` ORDER BY p.name LIMIT $${idx} OFFSET $${idx + 1}`;
+  query += ` ORDER BY p.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
   params.push(limit, offset);
 
   const { rows } = await pool.query(query, params);
@@ -114,7 +118,7 @@ export async function addProduct(pageId, sellerId, productId, customPrice) {
 export async function addAllProducts(pageId, sellerId) {
   await pool.query(
     `INSERT INTO seller_products (seller_id, page_id, product_id)
-     SELECT $1, $2, p.id FROM products p WHERE p.active = true
+     SELECT $1, $2, p.id FROM products p WHERE p.active = true AND ${NEGOCIO_FILTER}
      ON CONFLICT (page_id, product_id) DO UPDATE SET active = true`,
     [sellerId, pageId]
   );
@@ -166,7 +170,7 @@ export async function findById(pageId, sellerId, productId) {
       ) AS seller_images
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.active = true AND p.id = $3
+    WHERE p.active = true AND ${NEGOCIO_FILTER} AND p.id = $3
   `, [pageId, sellerId, productId]);
   return rows[0] || null;
 }

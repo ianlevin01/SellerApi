@@ -2,19 +2,17 @@ import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import s3, { BUCKET, signKey, signKeys } from "../utils/s3Client.js";
 import * as combosRepository from "./combosRepository.js";
 import * as storeRepository from "../store/storeRepository.js";
-import { calcShownCost, getSellerPlatformPct } from "../utils/pricing.js";
+import { calcShownCost } from "../utils/pricing.js";
 
 export async function getCombos(pageId, sellerId) {
-  const [combos, cotizacion, totalSales] = await Promise.all([
+  const [combos, cotizacion] = await Promise.all([
     combosRepository.findByPage(pageId, sellerId),
     storeRepository.getCotizacion(),
-    storeRepository.getSellerTotalSales(sellerId),
   ]);
-  const platformPct = getSellerPlatformPct(totalSales);
 
   return Promise.all(combos.map(async c => {
     const comboCostMin = (c.products || []).reduce((sum, p) => {
-      return sum + calcShownCost(p.cost_usd || 0, cotizacion, platformPct) * (p.quantity || 1);
+      return sum + calcShownCost(p.cost_usd || 0, cotizacion, 30) * (p.quantity || 1);
     }, 0);
     return {
       ...c,
@@ -51,9 +49,33 @@ export async function createCombo(pageId, sellerId, body) {
   return { id: comboId, message: "Combo creado" };
 }
 
+const FREE_SHIPPING_MIN_MARGIN = 15000;
+
 export async function updateCombo(comboId, sellerId, body) {
   const owned = await combosRepository.isOwned(comboId, sellerId);
   if (!owned) throw { status: 404, message: "Combo no encontrado" };
+
+  // Validate promo price if provided
+  if (body.promo_price !== undefined && body.promo_price !== null) {
+    const promoPrice  = Number(body.promo_price);
+    const customPrice = Number(body.custom_price || 0);
+    const freeShip    = Boolean(body.free_shipping);
+
+    if (promoPrice > 0) {
+      if (customPrice > 0 && promoPrice >= customPrice) {
+        throw { status: 400, message: "El precio promo debe ser menor al precio regular del combo." };
+      }
+      // Validate against min price — we don't have minRequired here so the frontend validates it;
+      // the backend validates the promo < regular constraint only
+      if (freeShip && customPrice > 0 && promoPrice < FREE_SHIPPING_MIN_MARGIN) {
+        throw { status: 400, message: `Con envío gratis, el precio promo no puede ser menor a $${FREE_SHIPPING_MIN_MARGIN.toLocaleString("es-AR")}.` };
+      }
+      body = { ...body, promo_enabled: true, promo_price: promoPrice };
+    } else {
+      body = { ...body, promo_enabled: false, promo_price: null };
+    }
+  }
+
   await combosRepository.update(comboId, sellerId, body);
   return { message: "Combo actualizado" };
 }
