@@ -49,7 +49,7 @@ export async function createCombo(pageId, sellerId, body) {
   return { id: comboId, message: "Combo creado" };
 }
 
-const FREE_SHIPPING_MIN_MARGIN = 0; // TODO: volver a 15000 después de pruebas
+const FREE_SHIPPING_MIN_MARGIN = 15000;
 
 export async function updateCombo(comboId, sellerId, body) {
   const owned = await combosRepository.isOwned(comboId, sellerId);
