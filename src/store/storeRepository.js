@@ -155,6 +155,7 @@ export async function getOrders(sellerId) {
            'name',       woi.name,
            'quantity',   woi.quantity,
            'unit_price', woi.unit_price,
+           'unit_cost',  woi.unit_cost,
            'product_id', woi.product_id
          )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
          '[]'

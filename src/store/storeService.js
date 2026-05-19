@@ -235,7 +235,8 @@ export async function getConfig(sellerId) {
 export async function getOrders(sellerId) {
   const orders = await storeRepository.getOrders(sellerId);
 
-  const cotizacion = await storeRepository.getCotizacion();
+  // cotizacion solo se usa como fallback para órdenes sin unit_cost (anteriores a migración 018)
+  let cotizacion = null;
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
     const orderPlatformPct = getSellerPlatformPct(Number(order.total));
@@ -243,9 +244,22 @@ export async function getOrders(sellerId) {
 
     for (const item of order.items) {
       if (!item.product_id) continue;
-      const costUsd    = await storeRepository.getCostUsdForProduct(item.product_id);
-      const shownCost  = calcShownCost(costUsd, cotizacion, orderPlatformPct);
-      const diferencia = Number(item.unit_price) - shownCost;
+
+      let baseCost;
+      if (item.unit_cost != null) {
+        // Costo bloqueado al momento del checkout — mismo valor que usa payoutsService
+        baseCost = Number(item.unit_cost);
+      } else {
+        // Fallback para órdenes anteriores a la migración 018
+        if (cotizacion === null) cotizacion = await storeRepository.getCotizacion();
+        const costUsd = await storeRepository.getCostUsdForProduct(item.product_id);
+        baseCost = calcShownCost(costUsd, cotizacion, 30);
+      }
+
+      // adjustedCost = baseCost × (1 + platformPct/100) / 1.30
+      // baseCost fue calculado con tier 30%; ajustamos al tier real del pedido
+      const adjustedCost = baseCost * (1 + orderPlatformPct / 100) / 1.30;
+      const diferencia   = Number(item.unit_price) - adjustedCost;
       if (diferencia > 0) ganancia_vendedor += diferencia * item.quantity;
     }
 
