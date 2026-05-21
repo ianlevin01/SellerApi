@@ -49,6 +49,7 @@ router.get("/reports/sales", h(req => svc.getSalesReport({
 // Catalog
 router.get("/products",                      h(() => svc.getProducts()));
 router.put("/products/:id/cost",             h(req => svc.updateProductCost(req.params.id, req.body.cost)));
+router.put("/products/:id/dimensions",       h(req => svc.updateProductDimensions(req.params.id, req.body)));
 router.get("/price-config",                  h(() => svc.getPriceConfig()));
 router.put("/price-config",                  h(req => svc.updatePriceConfig(req.body.cotizacion)));
 

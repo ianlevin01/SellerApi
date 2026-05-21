@@ -228,12 +228,26 @@ export async function getAllProducts() {
     SELECT p.id, p.code, p.name, p.active,
            c.name AS category_name,
            p.costo_usd AS cost_usd,
+           p.weight_grams, p.volume_cm3, p.dims_reviewed,
            COALESCE((SELECT s.quantity FROM stock s WHERE s.product_id = p.id LIMIT 1), 0) AS stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     WHERE p.negocio_id = ANY(${NEGOCIOS_SQL})
     ORDER BY p.name`);
   return rows;
+}
+
+export async function updateProductDimensions(productId, { weight_grams, volume_cm3, dims_reviewed }) {
+  const sets   = [];
+  const params = [];
+
+  if (weight_grams  !== undefined) { params.push(weight_grams);  sets.push(`weight_grams = $${params.length}`); }
+  if (volume_cm3    !== undefined) { params.push(volume_cm3);    sets.push(`volume_cm3 = $${params.length}`); }
+  if (dims_reviewed !== undefined) { params.push(dims_reviewed); sets.push(`dims_reviewed = $${params.length}`); }
+
+  if (!sets.length) return;
+  params.push(productId);
+  await pool.query(`UPDATE products SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
 }
 
 export async function updateProductCost(productId, cost) {

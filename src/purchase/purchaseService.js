@@ -293,9 +293,10 @@ export async function confirmPayment(paymentId) {
   }
 
   return {
-    status:     payment.status,
-    order_id:   payment.external_reference,
-    payment_id: String(payment.id),
+    status:      payment.status,
+    order_id:    payment.external_reference,
+    payment_id:  String(payment.id),
+    amount:      payment.transaction_amount ?? null,
   };
 }
 

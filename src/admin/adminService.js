@@ -83,3 +83,17 @@ export async function updatePriceConfig(cotizacion) {
 export async function getSalesReport(filters) {
   return repo.getSalesReport(filters);
 }
+
+export async function updateProductDimensions(productId, body) {
+  const { weight_grams, volume_cm3, dims_reviewed } = body;
+  if (weight_grams !== undefined && (isNaN(Number(weight_grams)) || Number(weight_grams) < 0))
+    throw { status: 400, message: "weight_grams inválido" };
+  if (volume_cm3 !== undefined && (isNaN(Number(volume_cm3)) || Number(volume_cm3) < 0))
+    throw { status: 400, message: "volume_cm3 inválido" };
+  await repo.updateProductDimensions(productId, {
+    weight_grams:  weight_grams  !== undefined ? Number(weight_grams)  : undefined,
+    volume_cm3:    volume_cm3    !== undefined ? Number(volume_cm3)    : undefined,
+    dims_reviewed: dims_reviewed !== undefined ? Boolean(dims_reviewed) : undefined,
+  });
+  return { message: "Dimensiones actualizadas" };
+}
