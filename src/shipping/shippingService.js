@@ -207,6 +207,7 @@ export async function getAgencies(provinceOrCp) {
 // Called after order is created. Never throws — failure is logged only.
 export async function importShipment({ orderId, orderNumero, customer, shipping, total }) {
   if (!isConfigured()) return null;
+  if (shipping?.type === "pickup" || shipping?.type === "flete") return null;
 
   try {
     const token      = await getToken();

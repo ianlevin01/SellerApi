@@ -239,6 +239,84 @@ export async function sendPaymentConfirmed(orderId) {
   }
 }
 
+// ── Email: nuevo mensaje de cliente → vendedor ────────────────────────────────
+
+export async function sendChatNotificationToSeller(sellerId, { storeName, customerName, messageBody }) {
+  if (!sellerId) return;
+  try {
+    const { rows } = await pool.query(`SELECT email, name FROM sellers WHERE id = $1`, [sellerId]);
+    const seller = rows[0];
+    if (!seller?.email) return;
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">💬</span>
+        <span style="font-size:14px;font-weight:600;color:#1d4ed8">Nuevo mensaje en tu tienda</span>
+      </div>
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${seller.name ? `, ${seller.name.split(" ")[0]}` : ""}!</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151">
+        <strong>${customerName}</strong> te escribió en <strong>${storeName || "tu tienda"}</strong>:
+      </p>
+      <div style="background:#f9fafb;border-left:4px solid ${BRAND};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
+        <p style="margin:0;font-size:14px;color:#374151;line-height:1.6">${messageBody}</p>
+      </div>
+      <p style="margin:0;font-size:13px;color:#6b7280">
+        Respondé desde tu panel en <a href="https://sistema.ventaz.com.ar" style="color:${BRAND};text-decoration:none">sistema.ventaz.com.ar</a>
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from: FROM,
+      to:      seller.email,
+      subject: `💬 Nuevo mensaje de ${customerName} — ${storeName || "tu tienda"}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendChatNotificationToSeller error:", err.message);
+  }
+}
+
+// ── Email: respuesta del vendedor → cliente ───────────────────────────────────
+
+export async function sendChatReplyToCustomer({ customerEmail, customerName, storeName, storeSlug, replyBody }) {
+  if (!customerEmail) return;
+  try {
+    const storeUrl = storeSlug && process.env.STORE_DOMAIN
+      ? `https://${storeSlug}.${process.env.STORE_DOMAIN}`
+      : null;
+
+    const firstName = customerName?.split(" ")[0] || "ahí";
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">💬</span>
+        <span style="font-size:14px;font-weight:600;color:#15803d">Te respondieron</span>
+      </div>
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola, ${firstName}!</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151">
+        <strong>${storeName || "El vendedor"}</strong> respondió tu mensaje:
+      </p>
+      <div style="background:#f9fafb;border-left:4px solid ${BRAND};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
+        <p style="margin:0;font-size:14px;color:#374151;line-height:1.6">${replyBody}</p>
+      </div>
+      ${storeUrl ? `
+      <div style="text-align:center;margin-top:24px">
+        <a href="${storeUrl}" style="display:inline-block;background:${BRAND};color:#fff;font-weight:700;font-size:14px;padding:13px 28px;border-radius:10px;text-decoration:none">
+          Volver a la tienda →
+        </a>
+      </div>` : ""}
+    `);
+
+    await transporter.sendMail({
+      from: FROM,
+      to:      customerEmail,
+      subject: `💬 ${storeName || "El vendedor"} te respondió`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendChatReplyToCustomer error:", err.message);
+  }
+}
+
 // ── Email 3: nueva venta → vendedor (al crear el checkout, antes del pago) ──
 
 export async function sendSellerOrderPending({ sellerId, order, items, shippingAmount = 0 }) {

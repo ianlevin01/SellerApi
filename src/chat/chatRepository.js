@@ -24,7 +24,7 @@ export async function findOrCreateConversation(sellerId, { customer_name, custom
 
 export async function getConversationByToken(conversationId, accessToken) {
   const { rows } = await pool.query(
-    `SELECT id, seller_id, customer_name FROM conversations
+    `SELECT id, seller_id, customer_name, customer_email FROM conversations
      WHERE id = $1 AND access_token = $2`,
     [conversationId, accessToken]
   );

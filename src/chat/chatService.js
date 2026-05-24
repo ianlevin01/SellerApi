@@ -1,6 +1,7 @@
 // src/modules/chat/chatService.js
 import * as chatRepository from "./chatRepository.js";
 import * as storeRepository from "../store/storeRepository.js";
+import { sendChatNotificationToSeller, sendChatReplyToCustomer } from "../email/buyerEmails.js";
 
 // ── Público (cliente en la tienda) ────────────────────────────
 
@@ -18,6 +19,12 @@ export async function startConversation(slug, { customer_name, customer_email, c
   });
 
   await chatRepository.insertMessage(conversation.id, "customer", body.trim());
+
+  sendChatNotificationToSeller(page.seller_id, {
+    storeName:    page.store_name,
+    customerName: customer_name.trim(),
+    messageBody:  body.trim(),
+  }).catch(() => {});
 
   return { conversation_id: conversation.id, access_token: conversation.access_token };
 }
@@ -38,7 +45,19 @@ export async function sendPublicMessage(slug, conversationId, accessToken, body)
   const conversation = await chatRepository.getConversationByToken(conversationId, accessToken);
   if (!conversation)  throw { status: 403, message: "Acceso denegado" };
 
-  return chatRepository.insertMessage(conversationId, "customer", body.trim());
+  const msg = await chatRepository.insertMessage(conversationId, "customer", body.trim());
+
+  // Notify seller of follow-up message
+  const page = await storeRepository.getPageBySlug(slug).catch(() => null);
+  if (page) {
+    sendChatNotificationToSeller(conversation.seller_id, {
+      storeName:    page.store_name,
+      customerName: conversation.customer_name,
+      messageBody:  body.trim(),
+    }).catch(() => {});
+  }
+
+  return msg;
 }
 
 export async function sendQuoteRequest(slug, conversationId, accessToken, { items, total }) {
@@ -75,7 +94,21 @@ export async function sendSellerMessage(sellerId, conversationId, body) {
   const conversation = await chatRepository.getConversationById(conversationId, sellerId);
   if (!conversation) throw { status: 404, message: "Conversación no encontrada" };
 
-  return chatRepository.insertMessage(conversationId, "seller", body.trim());
+  const msg = await chatRepository.insertMessage(conversationId, "seller", body.trim());
+
+  if (conversation.customer_email) {
+    storeRepository.getSellerActivePage(sellerId)
+      .then(page => sendChatReplyToCustomer({
+        customerEmail: conversation.customer_email,
+        customerName:  conversation.customer_name,
+        storeName:     page?.store_name,
+        storeSlug:     page?.slug,
+        replyBody:     body.trim(),
+      }))
+      .catch(() => {});
+  }
+
+  return msg;
 }
 
 export async function acceptQuote(sellerId, conversationId, messageId) {

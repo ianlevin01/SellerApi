@@ -339,6 +339,14 @@ export async function replaceDiscountTiersByPage(pageId, discountType, tiers) {
   }
 }
 
+export async function getSellerActivePage(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT slug, store_name FROM seller_pages WHERE seller_id = $1 AND active = true LIMIT 1`,
+    [sellerId]
+  );
+  return rows[0] || null;
+}
+
 // Used by getPublicStore (page already known by slug)
 export async function getDiscountConfig(pageId) {
   return getDiscountConfigByPage(pageId);
