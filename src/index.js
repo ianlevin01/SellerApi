@@ -18,6 +18,7 @@ import { adminChatRouter, adminMonitorRouter, sellerAdminChatRouter } from "./ad
 import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerChatRoutes.js";
 import onboardingRoutes from "./onboarding/onboardingRoutes.js";
 import { startStockListener } from "./stock/stockListener.js";
+import { runMigrations }      from "./database/runMigrations.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -86,6 +87,12 @@ app.use("/consumer",               consumerPublicRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
-
-startStockListener();
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
+    startStockListener();
+  })
+  .catch(err => {
+    console.error("[migrations] Error fatal — servidor no iniciado:", err);
+    process.exit(1);
+  });
