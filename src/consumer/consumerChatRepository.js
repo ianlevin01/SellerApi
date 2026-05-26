@@ -1,13 +1,13 @@
 import db from "../database/db.js";
 
-export async function createConversation({ seller_id, consumer_email, consumer_name, consumer_phone, access_token, subject, order_items, grand_total, shipping_info }) {
+export async function createConversation({ seller_id, consumer_email, consumer_name, consumer_phone, access_token, subject, order_items, grand_total, shipping_info, store_slug }) {
   const { rows } = await db.query(
     `INSERT INTO consumer_conversations
-       (seller_id, consumer_email, consumer_name, consumer_phone, access_token, subject, order_items, grand_total, shipping_info)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       (seller_id, consumer_email, consumer_name, consumer_phone, access_token, subject, order_items, grand_total, shipping_info, store_slug)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      RETURNING *`,
     [seller_id, consumer_email, consumer_name, consumer_phone || null, access_token, subject,
-     JSON.stringify(order_items || []), grand_total || 0, JSON.stringify(shipping_info || {})]
+     JSON.stringify(order_items || []), grand_total || 0, JSON.stringify(shipping_info || {}), store_slug || null]
   );
   return rows[0];
 }

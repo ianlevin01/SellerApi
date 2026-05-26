@@ -57,6 +57,7 @@ export async function createConversation(slug, body) {
     order_items:   body.order_items   || [],
     grand_total:   body.grand_total   || 0,
     shipping_info: body.shipping_info || {},
+    store_slug:    slug || null,
   });
 
   await repo.addMessage(conv.id, "admin",
@@ -98,7 +99,9 @@ export async function adminReply(id, body_text) {
 
   let link = null;
   if (conv.seller_id) {
-    const slug = await repo.getSlugBySellerId(conv.seller_id);
+    // Usar el slug guardado en la conversación; si es NULL (conversaciones antiguas)
+    // hacer fallback a la primera página activa del vendedor.
+    const slug = conv.store_slug || await repo.getSlugBySellerId(conv.seller_id);
     link = chatUrl(slug, conv.id, conv.access_token);
   }
 

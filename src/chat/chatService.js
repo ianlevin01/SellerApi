@@ -16,6 +16,7 @@ export async function startConversation(slug, { customer_name, customer_email, c
     customer_name:  customer_name.trim(),
     customer_email: customer_email?.trim() || null,
     customer_phone: customer_phone?.trim() || null,
+    store_slug:     slug,
   });
 
   await chatRepository.insertMessage(conversation.id, "customer", body.trim());
@@ -97,7 +98,13 @@ export async function sendSellerMessage(sellerId, conversationId, body) {
   const msg = await chatRepository.insertMessage(conversationId, "seller", body.trim());
 
   if (conversation.customer_email) {
-    storeRepository.getSellerActivePage(sellerId)
+    // Usar el slug guardado en la conversación para apuntar a la tienda correcta.
+    // Si store_slug es NULL (conversaciones antiguas), fallback a la primera página activa.
+    const getPageFn = conversation.store_slug
+      ? storeRepository.getPageBySlug(conversation.store_slug)
+      : storeRepository.getSellerActivePage(sellerId);
+
+    getPageFn
       .then(page => sendChatReplyToCustomer({
         customerEmail: conversation.customer_email,
         customerName:  conversation.customer_name,

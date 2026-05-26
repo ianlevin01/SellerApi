@@ -2,10 +2,10 @@
 import pool from "../database/db.js";
 import crypto from "crypto";
 
-export async function findOrCreateConversation(sellerId, { customer_name, customer_email, customer_phone }) {
+export async function findOrCreateConversation(sellerId, { customer_name, customer_email, customer_phone, store_slug }) {
   if (customer_email) {
     const { rows: existing } = await pool.query(
-      `SELECT id, access_token FROM conversations
+      `SELECT id, access_token, store_slug FROM conversations
        WHERE seller_id = $1 AND customer_email = $2`,
       [sellerId, customer_email]
     );
@@ -14,10 +14,10 @@ export async function findOrCreateConversation(sellerId, { customer_name, custom
 
   const access_token = crypto.randomBytes(32).toString("hex");
   const { rows } = await pool.query(
-    `INSERT INTO conversations (seller_id, customer_name, customer_email, customer_phone, access_token)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, access_token`,
-    [sellerId, customer_name, customer_email || null, customer_phone || null, access_token]
+    `INSERT INTO conversations (seller_id, customer_name, customer_email, customer_phone, access_token, store_slug)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, access_token, store_slug`,
+    [sellerId, customer_name, customer_email || null, customer_phone || null, access_token, store_slug || null]
   );
   return rows[0];
 }
@@ -33,7 +33,7 @@ export async function getConversationByToken(conversationId, accessToken) {
 
 export async function getConversationById(conversationId, sellerId) {
   const { rows } = await pool.query(
-    `SELECT id, customer_name, customer_email, customer_phone, created_at
+    `SELECT id, customer_name, customer_email, customer_phone, store_slug, created_at
      FROM conversations WHERE id = $1 AND seller_id = $2`,
     [conversationId, sellerId]
   );
