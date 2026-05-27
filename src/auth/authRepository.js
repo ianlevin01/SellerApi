@@ -19,8 +19,8 @@ export async function findSellerByEmail(email) {
 export async function findSellerById(id) {
   await ensureAvatarColumn();
   const { rows } = await pool.query(
-    `SELECT s.id, s.email, s.name, s.phone, s.phone_verified,
-            s.city, s.age, s.how_found_us, s.avatar_key,
+    `SELECT s.id, s.email, s.name, s.first_name, s.last_name, s.phone, s.phone_verified,
+            s.city, s.age, s.birth_date, s.how_found_us, s.avatar_key,
             sp.slug, sp.store_name, sp.store_description,
             sp.banner_color, sp.logo_key, sp.pct_markup
      FROM sellers s
@@ -31,18 +31,24 @@ export async function findSellerById(id) {
   return rows[0] || null;
 }
 
-export async function updateProfile(id, { name, phone, city, age, how_found_us }) {
+export async function updateProfile(id, { name, first_name, last_name, phone, city, age, birth_date, how_found_us }) {
   await ensureAvatarColumn();
   const { rows } = await pool.query(
     `UPDATE sellers
      SET name         = COALESCE($1, name),
-         phone        = COALESCE($2, phone),
-         city         = COALESCE($3, city),
-         age          = COALESCE($4, age),
-         how_found_us = COALESCE($5, how_found_us)
-     WHERE id = $6
-     RETURNING id, email, name, phone, phone_verified, city, age, how_found_us, avatar_key`,
-    [name ?? null, phone ?? null, city ?? null, age ?? null, how_found_us ?? null, id]
+         first_name   = COALESCE($2, first_name),
+         last_name    = COALESCE($3, last_name),
+         phone        = COALESCE($4, phone),
+         city         = COALESCE($5, city),
+         age          = COALESCE($6, age),
+         birth_date   = COALESCE($7, birth_date),
+         how_found_us = COALESCE($8, how_found_us)
+     WHERE id = $9
+     RETURNING id, email, name, first_name, last_name, phone, phone_verified,
+               city, age, birth_date, how_found_us, avatar_key`,
+    [name ?? null, first_name ?? null, last_name ?? null,
+     phone ?? null, city ?? null, age ?? null,
+     birth_date || null, how_found_us ?? null, id]
   );
   return rows[0];
 }

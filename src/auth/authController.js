@@ -47,8 +47,8 @@ export async function getProfile(req, res) {
 
 export async function updateProfile(req, res) {
   try {
-    const { name, phone, city, age, how_found_us } = req.body;
-    const result = await authService.updateProfile(req.seller.id, { name, phone, city, age, how_found_us });
+    const { name, first_name, last_name, phone, city, age, birth_date, how_found_us } = req.body;
+    const result = await authService.updateProfile(req.seller.id, { name, first_name, last_name, phone, city, age, birth_date, how_found_us });
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
