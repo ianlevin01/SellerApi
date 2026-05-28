@@ -6,6 +6,7 @@ import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending } from "../email/buyerEmails.js";
+import { crearPresupuesto } from "./gestionmayoristaService.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -289,6 +290,12 @@ export async function confirmPayment(paymentId) {
       payoutsService.createEarningForOrder(payment.external_reference)
         .catch(err => console.error("[payouts] createEarning error:", err.message));
       sendPaymentConfirmed(payment.external_reference);
+
+      // Crear presupuesto en gestionmayorista (background, no bloquea la respuesta)
+      repo.getOrderItems(payment.external_reference)
+        .then(items => crearPresupuesto(items))
+        .then(result => console.log(`[gestionmayorista] presupuesto creado id=${result?.id ?? "?"}`))
+        .catch(err  => console.error("[gestionmayorista] error al crear presupuesto:", err.message));
     }
   }
 
@@ -342,5 +349,11 @@ export async function handleWebhook(query, body) {
     payoutsService.createEarningForOrder(orderId)
       .catch(err => console.error("[payouts] createEarning error:", err.message));
     sendPaymentConfirmed(orderId);
+
+    // Crear presupuesto en gestionmayorista (background)
+    repo.getOrderItems(orderId)
+      .then(items => crearPresupuesto(items))
+      .then(result => console.log(`[gestionmayorista] presupuesto creado id=${result?.id ?? "?"}`))
+      .catch(err  => console.error("[gestionmayorista] error al crear presupuesto:", err.message));
   }
 }

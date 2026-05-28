@@ -130,3 +130,13 @@ export async function updateOrderStatus(orderId, status, mpPaymentId) {
     [status, mpPaymentId, orderId]
   );
 }
+
+export async function getOrderItems(orderId) {
+  const { rows } = await pool.query(
+    `SELECT product_id, quantity, unit_price
+     FROM web_order_items
+     WHERE web_order_id = $1`,
+    [orderId]
+  );
+  return rows;
+}
