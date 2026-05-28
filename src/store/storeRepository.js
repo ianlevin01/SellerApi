@@ -198,6 +198,7 @@ export async function getPublicProducts(pageId, sellerId) {
        p.id, p.code, p.name, p.description, p.category_id,
        c.name AS category_name,
        p.costo_usd,
+       p.created_at,
        spc.custom_price,
        COALESCE(
          (SELECT json_agg(si.key ORDER BY si."order")
