@@ -10,7 +10,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     SELECT
       p.id, p.code, p.name, p.description, p.active,
       p.category_id, c.name AS category_name,
-      p.costo_usd,
+      p.costo_usd, p.created_at,
       COALESCE(
         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
       ) AS stock_total,
