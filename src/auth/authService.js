@@ -8,6 +8,7 @@ import { firebaseAuth } from "../config/firebase.js";
 import { transporter } from "../config/mailer.js";
 import { signKey } from "../utils/s3Client.js";
 import { uploadStoreAsset } from "../images/imagesService.js";
+import { notifyVentazNewSeller } from "../email/buyerEmails.js";
 
 const twilioClient = process.env.TWILIO_ACCOUNT_SID
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -80,6 +81,9 @@ export async function register({ email, password, name, phone }) {
   const slug = buildSlug(name, seller.id);
   await authRepository.createSellerPage({ seller_id: seller.id, slug, store_name: name });
   await sendVerificationEmail(normalizedEmail, verify_token);
+
+  // Notificación interna a Ventaz (en background, no bloquea)
+  notifyVentazNewSeller({ name: seller.name, email: normalizedEmail, method: "Email" }).catch(() => {});
 
   return { email: seller.email };
 }
@@ -200,6 +204,9 @@ export async function googleLogin(idToken) {
       const slug = buildSlug(newSeller.name, newSeller.id);
       await authRepository.createSellerPage({ seller_id: newSeller.id, slug, store_name: newSeller.name });
       seller = await authRepository.findSellerByEmail(normalizedEmail);
+
+      // Notificación interna a Ventaz (en background, no bloquea)
+      notifyVentazNewSeller({ name: newSeller.name, email: normalizedEmail, method: "Google" }).catch(() => {});
     }
   }
 

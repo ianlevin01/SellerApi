@@ -1,7 +1,8 @@
 import { transporter } from "../config/mailer.js";
 import pool from "../database/db.js";
 
-const FROM    = process.env.SMTP_FROM || "noreply@ventaz.online";
+const FROM             = process.env.SMTP_FROM || "noreply@ventaz.online";
+const VENTAZ_INTERNAL  = "ventaz.oficial@gmail.com";
 const BRAND   = "#4db81a";
 const BRAND_D = "#3a9a15";
 
@@ -196,12 +197,13 @@ export async function sendPaymentConfirmed(orderId) {
     }
 
     // Email al vendedor (revendedor)
+    let seller = null;
     if (order.seller_id) {
       const { rows: sellerRows } = await pool.query(
         `SELECT email, name FROM sellers WHERE id = $1`,
         [order.seller_id]
       );
-      const seller = sellerRows[0];
+      seller = sellerRows[0] || null;
       if (seller?.email) {
         const html = baseLayout(`
           <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
@@ -234,6 +236,10 @@ export async function sendPaymentConfirmed(orderId) {
         });
       }
     }
+
+    // Notificación interna a Ventaz
+    notifyVentazNewSale({ order, seller, items: order.items }).catch(() => {});
+
   } catch (err) {
     console.error("[email] sendPaymentConfirmed error:", err.message);
   }
@@ -314,6 +320,98 @@ export async function sendChatReplyToCustomer({ customerEmail, customerName, sto
     });
   } catch (err) {
     console.error("[email] sendChatReplyToCustomer error:", err.message);
+  }
+}
+
+// ── Notificación interna: nuevo vendedor registrado → ventaz.oficial@gmail.com ──
+
+export async function notifyVentazNewSeller({ name, email, method = "email" }) {
+  try {
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🆕</span>
+        <span style="font-size:14px;font-weight:600;color:#1d4ed8">Nuevo vendedor registrado</span>
+      </div>
+      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Se registró un nuevo vendedor</h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+        <tr style="background:#f9fafb">
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:130px">Campo</td>
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Valor</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Nombre</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${name}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Email</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${email}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Método</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${method}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Fecha</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}</td>
+        </tr>
+      </table>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      VENTAZ_INTERNAL,
+      subject: `🆕 Nuevo vendedor: ${name} — ${email}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifyVentazNewSeller error:", err.message);
+  }
+}
+
+// ── Notificación interna: venta confirmada → ventaz.oficial@gmail.com ────────
+
+async function notifyVentazNewSale({ order, seller, items }) {
+  try {
+    const sellerInfo = seller
+      ? `${seller.name} (${seller.email})`
+      : `ID ${order.seller_id}`;
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">💰</span>
+        <span style="font-size:14px;font-weight:600;color:#15803d">Nueva venta confirmada</span>
+      </div>
+      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Pedido <span style="color:${BRAND}">#${order.numero}</span> — pago aprobado</h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <tr style="background:#f9fafb">
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:130px">Campo</td>
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Valor</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Vendedor</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${sellerInfo}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Comprador</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${order.customer_name} — ${order.customer_email || "sin email"}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Fecha</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}</td>
+        </tr>
+      </table>
+      ${itemsTable(items || [])}
+      ${totalBlock(Number(order.total), Number(order.shipping_amount))}
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      VENTAZ_INTERNAL,
+      subject: `💰 Venta #${order.numero} — ${fmt(order.total)} — ${order.customer_name} → ${seller?.name || "vendedor"}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifyVentazNewSale error:", err.message);
   }
 }
 
