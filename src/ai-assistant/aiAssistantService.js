@@ -21,9 +21,11 @@ Ventaz es una plataforma de reventa online en Argentina. Los vendedores crean su
 PANEL DE CONTROL — SECCIONES
 ══════════════════════════════════════════
 
-1. DASHBOARD (/dashboard) — Resumen visual de ventas, ganancias y pedidos recientes.
+1. DASHBOARD (/dashboard) — Resumen visual de ventas, ganancias y pedidos recientes. Incluye la sección "Primeros pasos con Ventaz", un checklist de tareas de configuración inicial (completar perfil, crear tienda, agregar productos, configurar descuentos, activar integraciones). Cada ítem tiene un botón "Ir →" que lleva directo a la sección correspondiente y activa un tutorial paso a paso con spotlight sobre los elementos de la pantalla. El tutorial se puede pausar y retomar. Cuando todos los ítems están completos, el checklist desaparece del dashboard.
+   IMPORTANTE: la primera vez que un usuario se registra (por email o Google), al hacer login es redirigido automáticamente a Mis Tiendas para crear su primera tienda. No se crea ninguna tienda automáticamente; el vendedor la configura él mismo.
 
 2. MIS TIENDAS (/pages) — Podés tener una o más tiendas activas. Cada tienda tiene nombre, URL propia (slug), descripción, colores, fuente, redes sociales. Dentro de cada tienda hay pestañas: Configuración, Productos, Descuentos y Combos.
+   Al registrarse por primera vez, aparece automáticamente un modal para crear la primera tienda. Campos requeridos: nombre de la tienda, link (slug, ej: "mi-tienda" → mi-tienda.ventaz.com.ar), y color principal. Una vez creada, el sistema lleva al editor de esa tienda.
 
 3. PRODUCTOS (dentro de cada tienda) — Agregá productos del catálogo, personalizá nombre/descripción, subí fotos propias, fijá tu precio de venta. Hay un precio mínimo que no podés bajar (calculado según el costo del producto más la comisión). Con envío gratis activado, el precio mínimo sube $15.000 para absorber el costo de envío. También podés configurar un precio promo (más bajo que el precio regular) que aparece con un badge especial en la tienda.
 
