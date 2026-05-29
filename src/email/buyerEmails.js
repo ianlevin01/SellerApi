@@ -197,13 +197,12 @@ export async function sendPaymentConfirmed(orderId) {
     }
 
     // Email al vendedor (revendedor)
-    let seller = null;
     if (order.seller_id) {
       const { rows: sellerRows } = await pool.query(
         `SELECT email, name FROM sellers WHERE id = $1`,
         [order.seller_id]
       );
-      seller = sellerRows[0] || null;
+      const seller = sellerRows[0];
       if (seller?.email) {
         const html = baseLayout(`
           <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
@@ -236,9 +235,6 @@ export async function sendPaymentConfirmed(orderId) {
         });
       }
     }
-
-    // Notificación interna a Ventaz
-    notifyVentazNewSale({ order, seller, items: order.items }).catch(() => {});
 
   } catch (err) {
     console.error("[email] sendPaymentConfirmed error:", err.message);
@@ -368,20 +364,27 @@ export async function notifyVentazNewSeller({ name, email, method = "email" }) {
   }
 }
 
-// ── Notificación interna: venta confirmada → ventaz.oficial@gmail.com ────────
+// ── Notificación interna: nuevo pedido creado → ventaz.oficial@gmail.com ─────
 
-async function notifyVentazNewSale({ order, seller, items }) {
+export async function notifyVentazNewSale({ order, sellerId, customer, items, shippingAmount = 0 }) {
   try {
-    const sellerInfo = seller
-      ? `${seller.name} (${seller.email})`
-      : `ID ${order.seller_id}`;
+    let sellerInfo = sellerId ? `ID ${sellerId}` : "desconocido";
+    if (sellerId) {
+      const { rows } = await pool.query(`SELECT email, name FROM sellers WHERE id = $1`, [sellerId]);
+      const seller = rows[0];
+      if (seller) sellerInfo = `${seller.name} (${seller.email})`;
+    }
+
+    const buyerName  = customer?.name  || order?.customer_name  || "sin nombre";
+    const buyerEmail = customer?.email || order?.customer_email || "sin email";
+    const total      = order.total ?? (items || []).reduce((s, i) => s + (i.unit_price_final ?? i.unit_price ?? 0) * i.quantity, 0) + shippingAmount;
 
     const html = baseLayout(`
-      <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
-        <span style="font-size:20px">💰</span>
-        <span style="font-size:14px;font-weight:600;color:#15803d">Nueva venta confirmada</span>
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🛒</span>
+        <span style="font-size:14px;font-weight:600;color:#92400e">Nuevo pedido creado</span>
       </div>
-      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Pedido <span style="color:${BRAND}">#${order.numero}</span> — pago aprobado</h2>
+      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Pedido <span style="color:${BRAND}">#${order.numero}</span></h2>
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
         <tr style="background:#f9fafb">
           <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:130px">Campo</td>
@@ -393,7 +396,7 @@ async function notifyVentazNewSale({ order, seller, items }) {
         </tr>
         <tr>
           <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Comprador</td>
-          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${order.customer_name} — ${order.customer_email || "sin email"}</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${buyerName} — ${buyerEmail}</td>
         </tr>
         <tr>
           <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Fecha</td>
@@ -401,13 +404,13 @@ async function notifyVentazNewSale({ order, seller, items }) {
         </tr>
       </table>
       ${itemsTable(items || [])}
-      ${totalBlock(Number(order.total), Number(order.shipping_amount))}
+      ${totalBlock(Number(total), Number(shippingAmount))}
     `);
 
     await transporter.sendMail({
       from:    FROM,
       to:      VENTAZ_INTERNAL,
-      subject: `💰 Venta #${order.numero} — ${fmt(order.total)} — ${order.customer_name} → ${seller?.name || "vendedor"}`,
+      subject: `🛒 Pedido #${order.numero} — ${fmt(total)} — ${buyerName}`,
       html,
     });
   } catch (err) {

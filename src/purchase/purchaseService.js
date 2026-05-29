@@ -5,7 +5,7 @@ import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
-import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending } from "../email/buyerEmails.js";
+import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending, notifyVentazNewSale } from "../email/buyerEmails.js";
 import { crearPresupuesto } from "./gestionmayoristaService.js";
 
 const mp = new MercadoPagoConfig({
@@ -164,6 +164,13 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   sendSellerOrderPending({
     sellerId: page.seller_id,
     order,
+    items: enrichedItems,
+    shippingAmount,
+  });
+  notifyVentazNewSale({
+    order,
+    sellerId: page.seller_id,
+    customer,
     items: enrichedItems,
     shippingAmount,
   });
