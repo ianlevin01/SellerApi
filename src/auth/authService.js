@@ -36,15 +36,6 @@ async function sendVerificationEmail(email, token) {
   });
 }
 
-function buildSlug(name, id) {
-  return name
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 50) + "-" + id.slice(0, 6);
-}
-
 async function withAvatarUrl(seller) {
   if (!seller) return seller;
   return {
@@ -78,8 +69,6 @@ export async function register({ email, password, name, phone }) {
     email: normalizedEmail, password_hash, name, phone, verify_token,
   });
 
-  const slug = buildSlug(name, seller.id);
-  await authRepository.createSellerPage({ seller_id: seller.id, slug, store_name: name });
   await sendVerificationEmail(normalizedEmail, verify_token);
 
   // Notificación interna a Ventaz (en background, no bloquea)
@@ -201,8 +190,6 @@ export async function googleLogin(idToken) {
         name:  displayName,
         google_id: uid,
       });
-      const slug = buildSlug(newSeller.name, newSeller.id);
-      await authRepository.createSellerPage({ seller_id: newSeller.id, slug, store_name: newSeller.name });
       seller = await authRepository.findSellerByEmail(normalizedEmail);
 
       // Notificación interna a Ventaz (en background, no bloquea)
