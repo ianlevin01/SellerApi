@@ -7,12 +7,16 @@ const router = Router();
 
 router.use(requireSeller);
 
-// add-all debe ir ANTES de /:productId para que Express no lo interprete como un id
-router.get   ("/",                      productsController.getProducts);
-router.get   ("/:productId",            productsController.getProduct);
-router.post  ("/add-all",               productsController.addAllProducts);
-router.patch ("/:productId/customize",  productsController.customizeProduct);
-router.post  ("/:productId",            productsController.addProduct);
-router.delete("/:productId",            productsController.removeProduct);
+// Rutas fijas primero — deben ir ANTES de /:productId para que Express no las interprete como un id
+router.get   ("/",                                    productsController.getProducts);
+router.post  ("/add-all",                             productsController.addAllProducts);
+router.post  ("/ai/generate-description",             productsController.generateDescription);
+
+router.get   ("/:productId",                          productsController.getProduct);
+router.patch ("/:productId/customize",                productsController.customizeProduct);
+router.post  ("/:productId/ai/verify-name",           productsController.verifyProductName);
+router.post  ("/:productId/ai/verify-image",          productsController.verifyProductImage);
+router.post  ("/:productId",                          productsController.addProduct);
+router.delete("/:productId",                          productsController.removeProduct);
 
 export default router;
