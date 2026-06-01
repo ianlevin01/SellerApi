@@ -265,8 +265,11 @@ export async function updateProductPromo(pageId, productId, promoPrice, promoEna
 export async function createPublicOrder({ customer, total, seller_id }) {
   const { rows } = await pool.query(
     `INSERT INTO web_orders
-       (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, negocio_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, '00000000-0000-0000-0000-000000000002')
+       (numero, customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, negocio_id)
+     VALUES (
+       (SELECT COALESCE(MAX(numero), 0) + 1 FROM web_orders WHERE seller_id = $7),
+       $1, $2, $3, $4, $5, $6, $7, '00000000-0000-0000-0000-000000000002'
+     )
      RETURNING id, numero`,
     [
       customer.name,

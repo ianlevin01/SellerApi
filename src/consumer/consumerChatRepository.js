@@ -89,12 +89,18 @@ export async function createConsultationOrder({ seller_id, customer, items, tota
   try {
     await client.query("BEGIN");
 
+    const { rows: numRow } = await client.query(
+      `SELECT COALESCE(MAX(numero), 0) + 1 AS next_num FROM web_orders WHERE seller_id = $1`,
+      [seller_id]
+    );
+    const nextNumero = numRow[0].next_num;
+
     const { rows } = await client.query(
       `INSERT INTO web_orders
-         (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed, color)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,'consultation')
+         (numero, customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed, color)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,'consultation')
        RETURNING *`,
-      [customer.name, customer.email, customer.phone || null, customer.city || null, customer.notes || null, total || 0, seller_id]
+      [nextNumero, customer.name, customer.email, customer.phone || null, customer.city || null, customer.notes || null, total || 0, seller_id]
     );
     const order = rows[0];
 

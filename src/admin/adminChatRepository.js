@@ -144,3 +144,9 @@ export async function getSellerUnreadAdminCount(sellerId) {
      WHERE conversation_id = $1 AND sender = 'admin' AND read_at IS NULL`, [conv.id]);
   return Number(rows[0]?.unread || 0);
 }
+
+export async function getSellerInfo(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT email, name FROM sellers WHERE id = $1`, [sellerId]);
+  return rows[0] || null;
+}

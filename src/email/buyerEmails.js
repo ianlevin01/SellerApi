@@ -456,3 +456,107 @@ export async function sendSellerOrderPending({ sellerId, order, items, shippingA
     console.error("[email] sendSellerOrderPending error:", err.message);
   }
 }
+
+// ── Notificación al vendedor: mensaje del equipo Ventaz ──────────────────────
+
+export async function notifySellerAdminMessage({ sellerEmail, sellerName, messageBody }) {
+  if (!sellerEmail) return;
+  const firstName = sellerName ? sellerName.split(" ")[0] : "";
+  const preview   = messageBody.length > 120 ? messageBody.slice(0, 120) + "…" : messageBody;
+
+  const html = baseLayout(`
+    <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+      <span style="font-size:20px">💬</span>
+      <span style="font-size:14px;font-weight:600;color:#166534">Nuevo mensaje del equipo Ventaz</span>
+    </div>
+
+    <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${firstName ? `, ${firstName}` : ""}!</h2>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6">
+      El equipo de Ventaz te envió un mensaje. Ingresá a tu panel para leerlo y responder.
+    </p>
+
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-left:4px solid ${BRAND};border-radius:8px;padding:16px 18px;margin-bottom:28px">
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.65;font-style:italic">"${preview}"</p>
+    </div>
+
+    <div style="text-align:center;margin-bottom:8px">
+      <a href="https://ventaz.com.ar/contact"
+         style="display:inline-block;padding:14px 32px;background:${BRAND};color:#fff;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:.01em">
+        Ver mensaje
+      </a>
+    </div>
+    <p style="text-align:center;margin:12px 0 0;font-size:12px;color:#9ca3af">
+      También podés ingresar desde <a href="https://ventaz.com.ar" style="color:${BRAND};text-decoration:none">ventaz.com.ar</a>
+    </p>
+  `);
+
+  try {
+    await transporter.sendMail({
+      from:    FROM,
+      to:      sellerEmail,
+      subject: "💬 Tenés un mensaje del equipo Ventaz",
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifySellerAdminMessage error:", err.message);
+  }
+}
+
+// ── Notificación al vendedor: CVU verificado por el equipo Ventaz ─────────────
+
+export async function notifySellerCvuVerified({ sellerEmail, sellerName, cvu, alias, holderName }) {
+  if (!sellerEmail) return;
+  const firstName = sellerName ? sellerName.split(" ")[0] : "";
+
+  const html = baseLayout(`
+    <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+      <span style="font-size:20px">✅</span>
+      <span style="font-size:14px;font-weight:600;color:#166534">Tu cuenta bancaria fue verificada</span>
+    </div>
+
+    <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">¡Hola${firstName ? `, ${firstName}` : ""}! Tu CVU está listo.</h2>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6">
+      El equipo de Ventaz verificó tu cuenta bancaria correctamente. A partir de ahora podés solicitar el cobro de tus ganancias cuando quieras.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:28px">
+      <tr style="background:#f9fafb">
+        <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:120px">Dato</td>
+        <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Valor</td>
+      </tr>
+      ${cvu ? `<tr>
+        <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">CVU</td>
+        <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6;font-family:monospace">${cvu}</td>
+      </tr>` : ""}
+      ${alias ? `<tr>
+        <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Alias</td>
+        <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${alias}</td>
+      </tr>` : ""}
+      ${holderName ? `<tr>
+        <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Titular</td>
+        <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${holderName}</td>
+      </tr>` : ""}
+    </table>
+
+    <div style="text-align:center;margin-bottom:8px">
+      <a href="https://ventaz.com.ar/cobros"
+         style="display:inline-block;padding:14px 32px;background:${BRAND};color:#fff;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:.01em">
+        Ver mis ganancias →
+      </a>
+    </div>
+    <p style="text-align:center;margin:12px 0 0;font-size:12px;color:#9ca3af">
+      Podés solicitar un cobro desde <a href="https://ventaz.com.ar" style="color:${BRAND};text-decoration:none">ventaz.com.ar</a>
+    </p>
+  `);
+
+  try {
+    await transporter.sendMail({
+      from:    FROM,
+      to:      sellerEmail,
+      subject: "✅ Tu cuenta bancaria fue verificada — ya podés cobrar",
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifySellerCvuVerified error:", err.message);
+  }
+}

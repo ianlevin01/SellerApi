@@ -2,6 +2,7 @@ import { Router } from "express";
 import requireAdminJWT  from "../middleware/requireAdminJWT.js";
 import requireSeller    from "../middleware/requireSeller.js";
 import * as repo        from "./adminChatRepository.js";
+import { notifySellerAdminMessage } from "../email/buyerEmails.js";
 
 // ── Admin-facing routes (/admin/chat/*, /admin/monitor/*) ────
 export const adminChatRouter = Router();
@@ -22,8 +23,15 @@ adminChatRouter.get("/sellers/:sellerId/messages", h(async req => {
 
 adminChatRouter.post("/sellers/:sellerId/messages", h(async req => {
   if (!req.body.body?.trim()) throw { status: 400, message: "Mensaje vacío" };
-  const conv = await repo.getOrCreateConversation(req.params.sellerId);
-  return repo.sendAdminMessage(conv.id, 'admin', req.body.body.trim());
+  const conv    = await repo.getOrCreateConversation(req.params.sellerId);
+  const message = await repo.sendAdminMessage(conv.id, 'admin', req.body.body.trim());
+
+  // Email al vendedor en background — no bloquea la respuesta
+  repo.getSellerInfo(req.params.sellerId)
+    .then(s => { if (s?.email) notifySellerAdminMessage({ sellerEmail: s.email, sellerName: s.name, messageBody: req.body.body.trim() }); })
+    .catch(() => {});
+
+  return message;
 }));
 
 // Monitor

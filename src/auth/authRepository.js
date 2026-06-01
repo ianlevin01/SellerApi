@@ -5,6 +5,15 @@ async function ensureAvatarColumn() {
   await pool.query("ALTER TABLE sellers ADD COLUMN IF NOT EXISTS avatar_key text");
 }
 
+async function ensureProfileColumns() {
+  await pool.query(`
+    ALTER TABLE sellers
+      ADD COLUMN IF NOT EXISTS first_name TEXT,
+      ADD COLUMN IF NOT EXISTS last_name  TEXT,
+      ADD COLUMN IF NOT EXISTS birth_date DATE
+  `);
+}
+
 export async function findSellerByEmail(email) {
   const { rows } = await pool.query(
     `SELECT s.*, sp.slug, sp.store_name, sp.pct_markup
@@ -18,6 +27,7 @@ export async function findSellerByEmail(email) {
 
 export async function findSellerById(id) {
   await ensureAvatarColumn();
+  await ensureProfileColumns();
   const { rows } = await pool.query(
     `SELECT s.id, s.email, s.name, s.first_name, s.last_name, s.phone, s.phone_verified,
             s.city, s.age, s.birth_date, s.how_found_us, s.avatar_key,
@@ -33,6 +43,7 @@ export async function findSellerById(id) {
 
 export async function updateProfile(id, { name, first_name, last_name, phone, city, age, birth_date, how_found_us }) {
   await ensureAvatarColumn();
+  await ensureProfileColumns();
   const { rows } = await pool.query(
     `UPDATE sellers
      SET name         = COALESCE($1, name),

@@ -65,14 +65,22 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
   try {
     await client.query("BEGIN");
 
+    // Calcular el próximo número de orden para este vendedor (correlativo por vendedor)
+    const { rows: numRows } = await client.query(
+      `SELECT COALESCE(MAX(numero), 0) + 1 AS next_num FROM web_orders WHERE seller_id = $1`,
+      [seller_id]
+    );
+    const nextNumero = numRows[0].next_num;
+
     const { rows } = await client.query(
       `
       INSERT INTO web_orders
-        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (numero, customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
       `,
       [
+        nextNumero,
         customer.name,
         customer.email,
         customer.phone  ?? null,

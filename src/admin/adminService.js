@@ -1,4 +1,5 @@
 import * as repo from "./adminRepository.js";
+import { notifySellerCvuVerified } from "../email/buyerEmails.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -33,6 +34,15 @@ export async function blockSeller(id, block) {
 export async function verifyCvu(id, verified) {
   const seller = await repo.verifyCvu(id, verified);
   if (!seller) throw { status: 404, message: "Vendedor no encontrado" };
+  if (verified) {
+    notifySellerCvuVerified({
+      sellerEmail: seller.email,
+      sellerName:  seller.name,
+      cvu:         seller.cvu,
+      alias:       seller.cvu_alias,
+      holderName:  seller.cvu_holder_name,
+    }).catch(() => {});
+  }
   return seller;
 }
 

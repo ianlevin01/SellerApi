@@ -105,7 +105,7 @@ export async function blockSeller(id, active) {
 
 export async function verifyCvu(id, verified) {
   const { rows } = await pool.query(
-    `UPDATE sellers SET cvu_verified = $1 WHERE id = $2 RETURNING id, name, cvu, cvu_alias, cvu_verified`, [verified, id]);
+    `UPDATE sellers SET cvu_verified = $1 WHERE id = $2 RETURNING id, name, email, cvu, cvu_alias, cvu_holder_name, cvu_verified`, [verified, id]);
   return rows[0];
 }
 
