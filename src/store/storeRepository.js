@@ -219,6 +219,10 @@ export async function getPublicProducts(pageId, sellerId) {
      LEFT JOIN categories c ON c.id = p.category_id
      WHERE spc.page_id = $1 AND spc.active = true AND p.active = true
        AND p.negocio_id = ANY(${NEGOCIOS_SQL})
+       AND (
+         EXISTS (SELECT 1 FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id)
+         OR EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = p.id)
+       )
        AND CASE
          WHEN (
            COALESCE(p.costo_usd, 0)

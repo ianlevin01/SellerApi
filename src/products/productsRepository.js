@@ -56,6 +56,10 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     WHERE p.active = true AND ${NEGOCIO_FILTER}
+      AND (
+        EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = p.id)
+        OR EXISTS (SELECT 1 FROM seller_images si WHERE si.seller_id = $2 AND si.product_id = p.id)
+      )
   `;
 
   const params = [pageId, sellerId];
