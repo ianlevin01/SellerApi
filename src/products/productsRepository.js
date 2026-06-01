@@ -99,7 +99,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
   const { rows: countRows } = await pool.query(countQuery, params);
   const total = Number(countRows[0].count);
 
-  query += ` ORDER BY p.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+  query += ` ORDER BY p.created_at DESC, p.id ASC LIMIT $${idx} OFFSET $${idx + 1}`;
   params.push(limit, offset);
 
   const { rows } = await pool.query(query, params);
