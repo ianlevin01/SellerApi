@@ -55,20 +55,39 @@ export async function updateCombo(comboId, sellerId, body) {
   const owned = await combosRepository.isOwned(comboId, sellerId);
   if (!owned) throw { status: 404, message: "Combo no encontrado" };
 
-  // Validate promo price if provided
+  const customPrice = Number(body.custom_price || 0);
+  const freeShip    = Boolean(body.free_shipping);
+
+  // Calcular precio mínimo real basado en costos de los productos del combo
+  const [totalCostUsd, cotizacion] = await Promise.all([
+    combosRepository.getComboTotalCostUsd(comboId),
+    storeRepository.getCotizacion(),
+  ]);
+  const minRequired = totalCostUsd > 0
+    ? Math.round(calcShownCost(totalCostUsd, cotizacion, 30))
+    : 0;
+  const minPrice = freeShip && minRequired > 0
+    ? minRequired + FREE_SHIPPING_MIN_MARGIN
+    : minRequired;
+
+  // Validar precio regular (requerido y >= mínimo)
+  if (customPrice <= 0) {
+    throw { status: 400, message: "El precio del combo es requerido." };
+  }
+  if (minPrice > 0 && customPrice < minPrice) {
+    throw { status: 400, message: `El precio mínimo para este combo es $${minPrice.toLocaleString("es-AR")}.` };
+  }
+
+  // Validar precio promo
   if (body.promo_price !== undefined && body.promo_price !== null) {
-    const promoPrice  = Number(body.promo_price);
-    const customPrice = Number(body.custom_price || 0);
-    const freeShip    = Boolean(body.free_shipping);
+    const promoPrice = Number(body.promo_price);
 
     if (promoPrice > 0) {
+      if (minPrice > 0 && promoPrice < minPrice) {
+        throw { status: 400, message: `El precio promo no puede ser menor al mínimo permitido ($${minPrice.toLocaleString("es-AR")}).` };
+      }
       if (customPrice > 0 && promoPrice >= customPrice) {
         throw { status: 400, message: "El precio promo debe ser menor al precio regular del combo." };
-      }
-      // Validate against min price — we don't have minRequired here so the frontend validates it;
-      // the backend validates the promo < regular constraint only
-      if (freeShip && customPrice > 0 && promoPrice < FREE_SHIPPING_MIN_MARGIN) {
-        throw { status: 400, message: `Con envío gratis, el precio promo no puede ser menor a $${FREE_SHIPPING_MIN_MARGIN.toLocaleString("es-AR")}.` };
       }
       body = { ...body, promo_enabled: true, promo_price: promoPrice };
     } else {

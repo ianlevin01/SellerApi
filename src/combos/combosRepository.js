@@ -155,6 +155,17 @@ export async function findById(comboId, sellerId) {
   return rows[0] || null;
 }
 
+export async function getComboTotalCostUsd(comboId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(p.costo_usd * cp.quantity), 0) AS total_cost_usd
+     FROM combo_products cp
+     JOIN products p ON p.id = cp.product_id
+     WHERE cp.combo_id = $1`,
+    [comboId]
+  );
+  return Number(rows[0]?.total_cost_usd || 0);
+}
+
 export async function isOwned(comboId, sellerId) {
   const { rows } = await pool.query(
     `SELECT id FROM page_combos WHERE id = $1 AND seller_id = $2`,
