@@ -120,10 +120,12 @@ export async function createSubscription(sellerId, sellerEmail, planId) {
   const plan = await repo.getPlanById(planId);
   if (!plan) throw { status: 404, message: "Plan no encontrado" };
 
-  // Guardar pending_plan_id como marcador — el webhook lo usa sin cambiar el plan visible
+  // Primero crear el plan en MP — si falla, no ensuciamos la BD
+  const initPoint = await ensureMpPlan(plan);
+
+  // Recién después guardar pending_plan_id para que el webhook lo use
   await repo.updateSellerSubscription(sellerId, { pending_plan_id: planId });
 
-  const initPoint = await ensureMpPlan(plan);
   return { init_point: initPoint };
 }
 
