@@ -3,16 +3,18 @@ import * as productsRepository from "./productsRepository.js";
 import { getCotizacion, getPageById } from "../store/storeRepository.js";
 import { signKeys } from "../utils/s3Client.js";
 import { calcShownCost } from "../utils/pricing.js";
+import { getSellerPlan } from "../utils/sellerPlan.js";
 
 export async function getProduct(pageId, sellerId, productId) {
-  const [row, cotizacion] = await Promise.all([
+  const [row, cotizacion, { plan_id }] = await Promise.all([
     productsRepository.findById(pageId, sellerId, productId),
     getCotizacion(),
+    getSellerPlan(sellerId),
   ]);
   if (!row) throw { status: 404, message: "Producto no encontrado" };
   return {
     ...row,
-    precio_1:           row.costo_usd ? calcShownCost(row.costo_usd, cotizacion, 30) : null,
+    precio_1:           row.costo_usd ? calcShownCost(row.costo_usd, cotizacion, 30, plan_id) : null,
     platform_margin_pct: 30,
     custom_price:        row.custom_price ? Number(row.custom_price) : null,
     system_images:       await signKeys(row.system_images || []),
@@ -24,13 +26,14 @@ export async function getProducts(pageId, sellerId, filters) {
   const limit  = Math.min(Number(filters.limit) || 20, 500);
   const offset = Number(filters.offset) || 0;
 
-  const [{ rows, total }, cotizacion] = await Promise.all([
+  const [{ rows, total }, cotizacion, { plan_id }] = await Promise.all([
     productsRepository.findAll({ pageId, sellerId, ...filters, limit, offset }),
     getCotizacion(),
+    getSellerPlan(sellerId),
   ]);
 
   const products = await Promise.all(rows.map(async p => {
-    const precio_1 = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, 30) : null;
+    const precio_1 = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, 30, plan_id) : null;
     return {
       ...p,
       precio_1,

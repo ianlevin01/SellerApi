@@ -1,6 +1,7 @@
 // src/modules/store/storeController.js
-import * as storeService   from "./storeService.js";
-import * as productsService from "../products/productsService.js";
+import * as storeService      from "./storeService.js";
+import * as productsService   from "../products/productsService.js";
+import { buildPageWithAI }    from "./aiPageBuilderService.js";
 
 function handleError(res, err) {
   if (err.status) return res.status(err.status).json({ message: err.message });
@@ -97,6 +98,15 @@ export async function deletePage(req, res) {
   try {
     await storeService.deletePage(req.params.pageId, req.seller.id);
     return res.status(204).end();
+  } catch (err) { handleError(res, err); }
+}
+
+export async function aiConfigPage(req, res) {
+  try {
+    const { request } = req.body;
+    if (!request) return res.status(400).json({ message: "Escribí qué querés para tu tienda" });
+    const result = await buildPageWithAI(req.seller.id, req.params.pageId, request);
+    return res.json(result);
   } catch (err) { handleError(res, err); }
 }
 

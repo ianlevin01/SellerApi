@@ -5,6 +5,7 @@ import * as shippingService    from "../shipping/shippingService.js";
 import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlan } from "../utils/sellerPlan.js";
 import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending, notifyVentazNewSale } from "../email/buyerEmails.js";
 import { crearPresupuesto } from "./gestionmayoristaService.js";
 
@@ -18,7 +19,7 @@ const mp = new MercadoPagoConfig({
  * Aplica markup del revendedor y descuentos por precio/cantidad.
  * Devuelve { enrichedItems, subtotal, discountTotal, total }
  */
-function buildPricedItems({ products, items, discountConfig, discountTiers, cotizacion, platformPct }) {
+function buildPricedItems({ products, items, discountConfig, discountTiers, cotizacion, platformPct, plan_id }) {
   let enrichedItems = [];
   let subtotal = 0;
 
@@ -27,7 +28,7 @@ function buildPricedItems({ products, items, discountConfig, discountTiers, coti
     if (!product) continue;
 
     // Precio base = mismo cálculo que usa el store al mostrar precio_1
-    const precioBase = calcShownCost(product.costo_usd, cotizacion, platformPct);
+    const precioBase = calcShownCost(product.costo_usd, cotizacion, platformPct, plan_id);
 
     // Precio de venta: el que fijó el revendedor, o el mínimo si no fijó nada
     const precioConMarkup = product.custom_price
@@ -106,7 +107,10 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   }
 
   // 2. Cotización del dólar — el tier se calcula después, una vez que conocemos el total del pedido
-  const cotizacion  = await repo.getCotizacionDolar();
+  const [cotizacion, { plan_id }] = await Promise.all([
+    repo.getCotizacionDolar(),
+    getSellerPlan(page.seller_id),
+  ]);
   const platformPct = 30; // siempre 30% para calcular el precio base mostrado al vendedor
 
   // 3. Productos
@@ -133,6 +137,7 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     discountTiers,
     cotizacion,
     platformPct,
+    plan_id,
   });
 
   // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo real del envío

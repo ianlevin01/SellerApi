@@ -7,9 +7,17 @@ export function getSellerPlatformPct(totalSalesARS) {
   return BASE_PCT;
 }
 
-// Costo mostrado al revendedor: cost_usd × cotizacion × 1.10 × (1 + platformPct/100)
-export function calcShownCost(costUsd, cotizacion, platformPct) {
-  return Number(costUsd) * Number(cotizacion) * 1.10 * (1 + platformPct / 100);
+// Factor de descuento por plan (sobre el precio base)
+export function getPlanCostFactor(planId) {
+  if (planId === "max") return 0.90; // 10% menos
+  if (planId === "pro") return 0.95; // 5% menos
+  return 1.00;                       // sin descuento
+}
+
+// Costo mostrado al revendedor: cost_usd × cotizacion × 1.10 × (1 + platformPct/100) × planFactor
+export function calcShownCost(costUsd, cotizacion, platformPct, planId = "inicial") {
+  const base = Number(costUsd) * Number(cotizacion) * 1.10 * (1 + platformPct / 100);
+  return base * getPlanCostFactor(planId);
 }
 
 // Ahorro por unidad respecto al tier base (30%)

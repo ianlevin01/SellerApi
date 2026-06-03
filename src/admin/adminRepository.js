@@ -44,6 +44,7 @@ export async function getAllSellers() {
   const { rows } = await pool.query(`
     SELECT
       s.id, s.name, s.email, s.phone, s.city, s.created_at, s.active,
+      s.plan_id, s.plan_status, s.trial_ends_at,
       s.cvu, s.cvu_alias, s.cvu_holder_name, s.cvu_verified,
       COUNT(DISTINCT sp.id)  FILTER (WHERE sp.active = true) AS pages_active,
       COUNT(DISTINCT wo.id)                                  AS orders_total,

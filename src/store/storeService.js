@@ -8,6 +8,7 @@ import { signKey, signKeys }       from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
 import { sendOrderReceived } from "../email/buyerEmails.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlan, getPlanStoreLimit }    from "../utils/sellerPlan.js";
 
 
 function isHttpUrl(value) {
@@ -163,6 +164,20 @@ export async function createPage(sellerId, body) {
   if (!slug || !/^[a-z0-9-]+$/.test(slug))
     throw { status: 400, message: "El slug solo puede contener letras minúsculas, números y guiones" };
   if (!store_name) throw { status: 400, message: "El nombre de la tienda es requerido" };
+
+  // Verificar límite de tiendas según plan
+  const { plan_id } = await getSellerPlan(sellerId);
+  const limit = getPlanStoreLimit(plan_id);
+  const existing = await storeRepository.getPages(sellerId);
+  if (existing.length >= limit) {
+    const names = { inicial: "Plan Inicial", pro: "Plan Pro", max: "Plan Max" };
+    throw {
+      status: 403,
+      message: `Tu ${names[plan_id] || "plan actual"} permite hasta ${limit} tienda${limit === 1 ? "" : "s"}. Actualizá tu plan para crear más.`,
+      plan_limit: true,
+    };
+  }
+
   try {
     return await storeRepository.createPage(sellerId, {
       page_name, slug, store_name, store_description, banner_color, pct_markup,
@@ -278,18 +293,19 @@ export async function getPublicStore(slug) {
   const page = await storeRepository.getPageBySlug(slug);
   if (!page) throw { status: 404, message: "Tienda no encontrada" };
 
-  const [products, cotizacion, discountConfig, allTiers, combos, integrationConfigs] = await Promise.all([
+  const [products, cotizacion, discountConfig, allTiers, combos, integrationConfigs, { plan_id }] = await Promise.all([
     storeRepository.getPublicProducts(page.id, page.seller_id),
     storeRepository.getCotizacion(),
     storeRepository.getDiscountConfig(page.id),
     storeRepository.getAllDiscountTiers(page.id),
     combosService.getPublicCombos(page.id).catch(() => []),
     integrationsRepository.getPublicConfigs(page.id).catch(() => ({})),
+    getSellerPlan(page.seller_id),
   ]);
   const platformPct = 30; // siempre base 30% para mostrar precio_1 (el tier aplica al calcular ganancias, no precios)
 
   const productsWithPrice = await Promise.all(products.map(async p => {
-    const precio_1     = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct) : null;
+    const precio_1     = p.costo_usd ? calcShownCost(p.costo_usd, cotizacion, platformPct, plan_id) : null;
     const precio_venta = p.custom_price ? Number(p.custom_price) : precio_1;
     return {
       ...p,
@@ -435,11 +451,12 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
 
-  const [cotizacion, costUsd] = await Promise.all([
+  const [cotizacion, costUsd, { plan_id }] = await Promise.all([
     storeRepository.getCotizacion(),
     storeRepository.getCostUsdForProduct(productId),
+    getSellerPlan(sellerId),
   ]);
-  const precio1 = calcShownCost(costUsd, cotizacion, 30);
+  const precio1 = calcShownCost(costUsd, cotizacion, 30, plan_id);
 
   if (precio1 > 0 && Number(customPrice) < precio1 - 0.01)
     throw { status: 400, message: `El precio mínimo para este producto es $${Math.ceil(precio1)}` };
@@ -456,12 +473,13 @@ export async function setProductPromo(pageId, sellerId, productId, promoPrice, p
     if (!promoPrice || Number(promoPrice) <= 0)
       throw { status: 400, message: "El precio promocional debe ser mayor a 0" };
 
-    const [cotizacion, costUsd, sellerProduct] = await Promise.all([
+    const [cotizacion, costUsd, sellerProduct, { plan_id }] = await Promise.all([
       storeRepository.getCotizacion(),
       storeRepository.getCostUsdForProduct(productId),
       storeRepository.getSellerProduct(pageId, productId),
+      getSellerPlan(sellerId),
     ]);
-    const precio1 = calcShownCost(costUsd, cotizacion, 30);
+    const precio1 = calcShownCost(costUsd, cotizacion, 30, plan_id);
 
     if (precio1 > 0 && Number(promoPrice) < precio1 - 0.01)
       throw { status: 400, message: `El precio promo mínimo es $${Math.ceil(precio1)}` };

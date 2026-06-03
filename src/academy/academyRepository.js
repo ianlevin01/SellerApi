@@ -1,0 +1,145 @@
+import pool from "../database/db.js";
+
+const PLAN_ORDER = { inicial: 1, pro: 2, max: 3 };
+
+export async function getCourses(sellerId, sellerPlanId = "inicial") {
+  const { rows } = await pool.query(
+    `SELECT c.*,
+            COUNT(s.id) AS section_count,
+            COUNT(p.section_id) AS completed_count
+     FROM academy_courses c
+     LEFT JOIN academy_sections s ON s.course_id = c.id
+     LEFT JOIN academy_progress p ON p.section_id = s.id AND p.seller_id = $1
+     WHERE c.published = true
+     GROUP BY c.id
+     ORDER BY c.sort_order ASC, c.created_at ASC`,
+    [sellerId]
+  );
+  const sellerOrder = PLAN_ORDER[sellerPlanId] ?? 1;
+  return rows.map(r => {
+    const minOrder = PLAN_ORDER[r.min_plan || "inicial"] ?? 1;
+    const locked   = sellerOrder < minOrder;
+    return {
+      ...r,
+      section_count:   Number(r.section_count),
+      completed_count: locked ? 0 : Number(r.completed_count),
+      progress_pct:    (!locked && r.section_count > 0)
+        ? Math.round((Number(r.completed_count) / Number(r.section_count)) * 100)
+        : 0,
+      locked,
+      min_plan: r.min_plan || "inicial",
+    };
+  });
+}
+
+export async function getCourseById(courseId, sellerId, sellerPlanId = "inicial") {
+  const { rows: courseRows } = await pool.query(
+    `SELECT * FROM academy_courses WHERE id = $1 AND published = true`,
+    [courseId]
+  );
+  if (!courseRows[0]) return null;
+  const minOrder    = PLAN_ORDER[courseRows[0].min_plan || "inicial"] ?? 1;
+  const sellerOrder = PLAN_ORDER[sellerPlanId] ?? 1;
+  if (sellerOrder < minOrder) return { ...courseRows[0], locked: true, sections: [] };
+
+  const { rows: sections } = await pool.query(
+    `SELECT s.*,
+            CASE WHEN p.section_id IS NOT NULL THEN true ELSE false END AS completed
+     FROM academy_sections s
+     LEFT JOIN academy_progress p ON p.section_id = s.id AND p.seller_id = $2
+     WHERE s.course_id = $1
+     ORDER BY s.sort_order ASC`,
+    [courseId, sellerId]
+  );
+
+  return { ...courseRows[0], sections };
+}
+
+export async function markComplete(sellerId, sectionId) {
+  await pool.query(
+    `INSERT INTO academy_progress (seller_id, section_id)
+     VALUES ($1, $2)
+     ON CONFLICT DO NOTHING`,
+    [sellerId, sectionId]
+  );
+}
+
+export async function markIncomplete(sellerId, sectionId) {
+  await pool.query(
+    `DELETE FROM academy_progress WHERE seller_id = $1 AND section_id = $2`,
+    [sellerId, sectionId]
+  );
+}
+
+// ── Admin ─────────────────────────────────────────────────────
+
+export async function adminGetCourses() {
+  const { rows } = await pool.query(
+    `SELECT c.*, COUNT(s.id) AS section_count
+     FROM academy_courses c
+     LEFT JOIN academy_sections s ON s.course_id = c.id
+     GROUP BY c.id
+     ORDER BY c.sort_order ASC, c.created_at ASC`
+  );
+  return rows.map(r => ({ ...r, section_count: Number(r.section_count) }));
+}
+
+export async function adminGetCourse(courseId) {
+  const { rows: courseRows } = await pool.query(
+    `SELECT * FROM academy_courses WHERE id = $1`, [courseId]
+  );
+  if (!courseRows[0]) return null;
+  const { rows: sections } = await pool.query(
+    `SELECT * FROM academy_sections WHERE course_id = $1 ORDER BY sort_order ASC`,
+    [courseId]
+  );
+  return { ...courseRows[0], sections };
+}
+
+export async function adminCreateCourse({ title, description, thumbnail_url, duration_min, sort_order, min_plan }) {
+  const { rows } = await pool.query(
+    `INSERT INTO academy_courses (title, description, thumbnail_url, duration_min, sort_order, min_plan)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [title, description || null, thumbnail_url || null, duration_min || 0, sort_order || 0, min_plan || "inicial"]
+  );
+  return rows[0];
+}
+
+export async function adminUpdateCourse(courseId, { title, description, thumbnail_url, duration_min, sort_order, published, min_plan }) {
+  const { rows } = await pool.query(
+    `UPDATE academy_courses
+     SET title=$1, description=$2, thumbnail_url=$3, duration_min=$4, sort_order=$5, published=$6, min_plan=$7
+     WHERE id=$8 RETURNING *`,
+    [title, description || null, thumbnail_url || null, duration_min || 0, sort_order || 0, !!published, min_plan || "inicial", courseId]
+  );
+  return rows[0];
+}
+
+export async function adminDeleteCourse(courseId) {
+  await pool.query(`DELETE FROM academy_courses WHERE id = $1`, [courseId]);
+}
+
+export async function adminCreateSection(courseId, { title, content_md, video_url, image_urls, sort_order, duration_min }) {
+  const { rows } = await pool.query(
+    `INSERT INTO academy_sections (course_id, title, content_md, video_url, image_urls, sort_order, duration_min)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [courseId, title, content_md || null, video_url || null,
+     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0]
+  );
+  return rows[0];
+}
+
+export async function adminUpdateSection(sectionId, { title, content_md, video_url, image_urls, sort_order, duration_min }) {
+  const { rows } = await pool.query(
+    `UPDATE academy_sections
+     SET title=$1, content_md=$2, video_url=$3, image_urls=$4, sort_order=$5, duration_min=$6
+     WHERE id=$7 RETURNING *`,
+    [title, content_md || null, video_url || null,
+     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0, sectionId]
+  );
+  return rows[0];
+}
+
+export async function adminDeleteSection(sectionId) {
+  await pool.query(`DELETE FROM academy_sections WHERE id = $1`, [sectionId]);
+}

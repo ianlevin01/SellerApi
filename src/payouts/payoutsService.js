@@ -1,5 +1,6 @@
 import * as repo from "./payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlan, getPlanPayoutDays } from "../utils/sellerPlan.js";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -79,11 +80,12 @@ export async function saveCvu(sellerId, { cvu, alias, holderName }) {
 // ── Ganancias ─────────────────────────────────────────────────
 
 export async function getSummary(sellerId) {
-  const [cvuInfo, balances, pendingOrders, availableOrders, payouts] = await Promise.all([
+  const [cvuInfo, balances, pendingOrders, availableOrders, pendingRelease, payouts] = await Promise.all([
     repo.getSellerCvu(sellerId),
     repo.getBalanceSummary(sellerId),
     repo.getEarnings(sellerId, "pending_approval"),
-    repo.getEarnings(sellerId, "available"),
+    repo.getAvailableEarnings(sellerId),
+    repo.getPendingReleaseEarnings(sellerId),
     repo.getPayouts(sellerId),
   ]);
 
@@ -94,8 +96,11 @@ export async function getSummary(sellerId) {
       orders: pendingOrders,
     },
     available: {
-      total:  Number(balances.available_total),
+      total:  availableOrders.reduce((s, o) => s + Number(o.amount), 0),
       orders: availableOrders,
+    },
+    pending_release: {
+      orders: pendingRelease,
     },
     payouts,
   };
@@ -151,12 +156,22 @@ export async function createEarningForOrder(webOrderId) {
 // ── Admin ─────────────────────────────────────────────────────
 
 export async function approveOrderEarning(webOrderId) {
-  const updated = await repo.approveOrderEarning(webOrderId);
-  if (!updated) {
-    const err = new Error("No se encontró ganancia pendiente para esa orden");
-    err.status = 404;
-    throw err;
+  const order = await repo.getOrderForEarning(webOrderId);
+  if (!order) throw { status: 404, message: "No se encontró la orden" };
+
+  const { plan_id } = await getSellerPlan(order.seller_id);
+  const days = getPlanPayoutDays(plan_id);
+
+  let availableAt;
+  if (days === 0) {
+    availableAt = new Date(); // disponible inmediatamente
+  } else {
+    const base = order.updated_at ? new Date(order.updated_at) : new Date();
+    availableAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
   }
+
+  const updated = await repo.approveOrderEarning(webOrderId, availableAt);
+  if (!updated) throw { status: 404, message: "No se encontró ganancia pendiente para esa orden" };
 }
 
 export async function markPayoutTransferred(payoutId) {

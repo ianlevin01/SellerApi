@@ -3,16 +3,18 @@ import s3, { BUCKET, signKey, signKeys } from "../utils/s3Client.js";
 import * as combosRepository from "./combosRepository.js";
 import * as storeRepository from "../store/storeRepository.js";
 import { calcShownCost } from "../utils/pricing.js";
+import { getSellerPlan } from "../utils/sellerPlan.js";
 
 export async function getCombos(pageId, sellerId) {
-  const [combos, cotizacion] = await Promise.all([
+  const [combos, cotizacion, { plan_id }] = await Promise.all([
     combosRepository.findByPage(pageId, sellerId),
     storeRepository.getCotizacion(),
+    getSellerPlan(sellerId),
   ]);
 
   return Promise.all(combos.map(async c => {
     const comboCostMin = (c.products || []).reduce((sum, p) => {
-      return sum + calcShownCost(p.cost_usd || 0, cotizacion, 30) * (p.quantity || 1);
+      return sum + calcShownCost(p.cost_usd || 0, cotizacion, 30, plan_id) * (p.quantity || 1);
     }, 0);
     return {
       ...c,
@@ -59,12 +61,13 @@ export async function updateCombo(comboId, sellerId, body) {
   const freeShip    = Boolean(body.free_shipping);
 
   // Calcular precio mínimo real basado en costos de los productos del combo
-  const [totalCostUsd, cotizacion] = await Promise.all([
+  const [totalCostUsd, cotizacion, { plan_id }] = await Promise.all([
     combosRepository.getComboTotalCostUsd(comboId),
     storeRepository.getCotizacion(),
+    getSellerPlan(sellerId),
   ]);
   const minRequired = totalCostUsd > 0
-    ? Math.round(calcShownCost(totalCostUsd, cotizacion, 30))
+    ? Math.round(calcShownCost(totalCostUsd, cotizacion, 30, plan_id))
     : 0;
   const minPrice = freeShip && minRequired > 0
     ? minRequired + FREE_SHIPPING_MIN_MARGIN

@@ -92,6 +92,9 @@ export async function login({ email, password }) {
   if (!seller)          throw { status: 401, message: "Email o contraseña incorrectos" };
   if (!seller.verified) throw { status: 403, message: "Verificá tu email antes de ingresar" };
 
+  if (!seller.password_hash)
+    throw { status: 401, message: "Esta cuenta fue creada con Google. Ingresá con el botón de Google." };
+
   const valid = await bcrypt.compare(password, seller.password_hash);
   if (!valid) throw { status: 401, message: "Email o contraseña incorrectos" };
 

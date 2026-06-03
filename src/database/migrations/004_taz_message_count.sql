@@ -1,1 +1,0 @@
-ALTER TABLE sellers ADD COLUMN IF NOT EXISTS taz_messages_count INTEGER DEFAULT 0;

@@ -16,7 +16,9 @@ import adminAuthRoutes  from "./admin/adminAuthRoutes.js";
 import adminRoutes      from "./admin/adminRoutes.js";
 import { adminChatRouter, adminMonitorRouter, sellerAdminChatRouter } from "./admin/adminChatRoutes.js";
 import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerChatRoutes.js";
-import onboardingRoutes from "./onboarding/onboardingRoutes.js";
+import onboardingRoutes    from "./onboarding/onboardingRoutes.js";
+import subscriptionRoutes from "./subscriptions/subscriptionRoutes.js";
+import academyRoutes      from "./academy/academyRoutes.js";
 import { startStockListener } from "./stock/stockListener.js";
 import { runMigrations }      from "./database/runMigrations.js";
 
@@ -28,6 +30,7 @@ app.set("trust proxy", 1); // Nginx sits in front — trust the first proxy for 
 const SELLER_APP    = process.env.SELLER_APP_URL;
 const STORE_DOMAIN  = process.env.STORE_PAGE_DOMAIN;
 const ADMIN_PANEL   = process.env.ADMIN_PANEL_URL;
+const ACADEMY_URL   = process.env.ACADEMY_URL;
 
 app.use(cors({
   origin(origin, cb) {
@@ -35,6 +38,7 @@ app.use(cors({
     if (origin.startsWith("http://localhost:")) return cb(null, true);
     if (SELLER_APP  && origin === SELLER_APP)  return cb(null, true);
     if (ADMIN_PANEL && origin === ADMIN_PANEL) return cb(null, true);
+    if (ACADEMY_URL && origin === ACADEMY_URL) return cb(null, true);
     if (STORE_DOMAIN && (
       origin === `https://${STORE_DOMAIN}` ||
       origin.endsWith(`.${STORE_DOMAIN}`)
@@ -76,6 +80,8 @@ app.use("/seller/purchase",       purchaseRoutes);
 app.use("/seller/payouts",        payoutsRoutes);
 app.use("/seller/ai-assistant",   aiAssistantRoutes);
 app.use("/seller/onboarding",     onboardingRoutes);
+app.use("/seller/subscriptions",  subscriptionRoutes);
+app.use("/academy",               academyRoutes);
 
 app.use("/admin/auth",             adminAuthRoutes);
 app.use("/admin",                  adminRoutes);

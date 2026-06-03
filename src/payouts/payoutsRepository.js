@@ -58,14 +58,41 @@ export async function getBalanceSummary(sellerId) {
   return rows[0];
 }
 
-export async function approveOrderEarning(webOrderId) {
+export async function approveOrderEarning(webOrderId, availableAt) {
   const { rowCount } = await pool.query(
     `UPDATE seller_earnings
-     SET status = 'available'
+     SET status       = 'available',
+         available_at = $2
      WHERE web_order_id = $1 AND status = 'pending_approval'`,
-    [webOrderId]
+    [webOrderId, availableAt || new Date()]
   );
   return rowCount > 0;
+}
+
+export async function getAvailableEarnings(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT se.id, se.amount, se.status, se.created_at, se.available_at,
+            wo.numero AS order_numero, wo.created_at AS order_date, wo.total AS order_total
+     FROM seller_earnings se
+     JOIN web_orders wo ON wo.id = se.web_order_id
+     WHERE se.seller_id = $1 AND se.status = 'available' AND (se.available_at IS NULL OR se.available_at <= NOW())
+     ORDER BY se.available_at ASC`,
+    [sellerId]
+  );
+  return rows;
+}
+
+export async function getPendingReleaseEarnings(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT se.id, se.amount, se.status, se.created_at, se.available_at,
+            wo.numero AS order_numero, wo.created_at AS order_date, wo.total AS order_total
+     FROM seller_earnings se
+     JOIN web_orders wo ON wo.id = se.web_order_id
+     WHERE se.seller_id = $1 AND se.status = 'available' AND se.available_at > NOW()
+     ORDER BY se.available_at ASC`,
+    [sellerId]
+  );
+  return rows;
 }
 
 // ── Pagos ─────────────────────────────────────────────────────
@@ -125,7 +152,7 @@ export async function markPayoutTransferred(payoutId) {
 
 export async function getOrderForEarning(webOrderId) {
   const { rows } = await pool.query(
-    `SELECT wo.id, wo.seller_id, wo.total,
+    `SELECT wo.id, wo.seller_id, wo.total, wo.updated_at,
             COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
             COALESCE(
               (SELECT json_agg(json_build_object(
