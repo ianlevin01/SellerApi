@@ -2,6 +2,7 @@
 import * as storeService      from "./storeService.js";
 import * as productsService   from "../products/productsService.js";
 import { buildPageWithAI }    from "./aiPageBuilderService.js";
+import * as analyticsRepo     from "./analyticsRepository.js";
 
 function handleError(res, err) {
   if (err.status) return res.status(err.status).json({ message: err.message });
@@ -207,5 +208,25 @@ export async function setProductPromo(req, res) {
       promo_price, promo_enabled
     );
     return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+// ── Analytics ─────────────────────────────────────────────────
+
+export async function trackVisit(req, res) {
+  try {
+    await analyticsRepo.incrementVisit(req.params.slug);
+    return res.status(204).end();
+  } catch { return res.status(204).end(); } // silencioso
+}
+
+export async function getPageAnalytics(req, res) {
+  try {
+    const { pageId } = req.params;
+    const sellerId   = req.seller.id;
+    const from = req.query.from || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+    const to   = req.query.to   || new Date().toISOString().slice(0, 10);
+    const data = await analyticsRepo.getAnalytics(pageId, sellerId, from, to);
+    return res.json(data);
   } catch (err) { handleError(res, err); }
 }

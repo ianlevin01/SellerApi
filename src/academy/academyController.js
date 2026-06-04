@@ -1,5 +1,7 @@
 import * as repo from "./academyRepository.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import s3, { BUCKET, signKey } from "../utils/s3Client.js";
 
 function handleError(res, err) {
   if (err.status) return res.status(err.status).json({ message: err.message });
@@ -38,6 +40,26 @@ export async function markIncomplete(req, res) {
 }
 
 // ── Admin ─────────────────────────────────────────────────────
+
+export async function adminUploadThumbnail(req, res) {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ message: "No se recibió ningún archivo" });
+
+    const ext = (file.mimetype.split("/")[1] || "jpg").replace("jpeg", "jpg");
+    const key = `academy/thumbnails/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+
+    await s3.send(new PutObjectCommand({
+      Bucket:      BUCKET,
+      Key:         key,
+      Body:        file.buffer,
+      ContentType: file.mimetype,
+    }));
+
+    const url = await signKey(key);
+    return res.json({ key, url });
+  } catch (err) { handleError(res, err); }
+}
 
 export async function adminGetCourses(req, res) {
   try { return res.json(await repo.adminGetCourses()); }

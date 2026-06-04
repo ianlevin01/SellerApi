@@ -1,6 +1,14 @@
 import pool from "../database/db.js";
+import { signKey } from "../utils/s3Client.js";
 
 const PLAN_ORDER = { inicial: 1, pro: 2, max: 3 };
+
+// Si el valor es una key de S3 (no empieza con http), la firma; si no, la devuelve tal cual
+async function resolveThumb(raw) {
+  if (!raw) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return signKey(raw);
+}
 
 export async function getCourses(sellerId, sellerPlanId = "inicial") {
   const { rows } = await pool.query(
@@ -16,11 +24,12 @@ export async function getCourses(sellerId, sellerPlanId = "inicial") {
     [sellerId]
   );
   const sellerOrder = PLAN_ORDER[sellerPlanId] ?? 1;
-  return rows.map(r => {
+  return Promise.all(rows.map(async r => {
     const minOrder = PLAN_ORDER[r.min_plan || "inicial"] ?? 1;
     const locked   = sellerOrder < minOrder;
     return {
       ...r,
+      thumbnail_url:   await resolveThumb(r.thumbnail_url),
       section_count:   Number(r.section_count),
       completed_count: locked ? 0 : Number(r.completed_count),
       progress_pct:    (!locked && r.section_count > 0)
@@ -29,7 +38,7 @@ export async function getCourses(sellerId, sellerPlanId = "inicial") {
       locked,
       min_plan: r.min_plan || "inicial",
     };
-  });
+  }));
 }
 
 export async function getCourseById(courseId, sellerId, sellerPlanId = "inicial") {
@@ -52,7 +61,8 @@ export async function getCourseById(courseId, sellerId, sellerPlanId = "inicial"
     [courseId, sellerId]
   );
 
-  return { ...courseRows[0], sections };
+  const course = courseRows[0];
+  return { ...course, thumbnail_url: await resolveThumb(course.thumbnail_url), sections };
 }
 
 export async function markComplete(sellerId, sectionId) {
@@ -81,7 +91,11 @@ export async function adminGetCourses() {
      GROUP BY c.id
      ORDER BY c.sort_order ASC, c.created_at ASC`
   );
-  return rows.map(r => ({ ...r, section_count: Number(r.section_count) }));
+  return Promise.all(rows.map(async r => ({
+    ...r,
+    thumbnail_url: await resolveThumb(r.thumbnail_url),
+    section_count: Number(r.section_count),
+  })));
 }
 
 export async function adminGetCourse(courseId) {
@@ -93,7 +107,8 @@ export async function adminGetCourse(courseId) {
     `SELECT * FROM academy_sections WHERE course_id = $1 ORDER BY sort_order ASC`,
     [courseId]
   );
-  return { ...courseRows[0], sections };
+  const course = courseRows[0];
+  return { ...course, thumbnail_url: await resolveThumb(course.thumbnail_url), sections };
 }
 
 export async function adminCreateCourse({ title, description, thumbnail_url, duration_min, sort_order, min_plan }) {
