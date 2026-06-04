@@ -232,8 +232,6 @@ export async function updatePageConfig(pageId, sellerId, body) {
 }
 
 export async function deletePage(pageId, sellerId) {
-  const pages = await storeRepository.getPages(sellerId);
-  if (pages.length <= 1) throw { status: 400, message: "No podés eliminar tu única tienda" };
   const deleted = await storeRepository.deletePage(pageId, sellerId);
   if (!deleted) throw { status: 404, message: "Página no encontrada" };
 }
