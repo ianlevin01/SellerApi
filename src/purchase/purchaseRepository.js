@@ -40,6 +40,23 @@ export async function getProductsByIds(ids, pageId) {
   return rows;
 }
 
+export async function getCombosByIds(ids, pageId) {
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `SELECT c.id, c.name, c.custom_price, c.free_shipping,
+            COALESCE((
+              SELECT SUM(p2.costo_usd * cp.quantity)
+              FROM combo_products cp
+              JOIN products p2 ON p2.id = cp.product_id
+              WHERE cp.combo_id = c.id
+            ), 0) AS total_cost_usd
+     FROM seller_combos c
+     WHERE c.id = ANY($1) AND c.page_id = $2 AND c.active = true`,
+    [ids, pageId]
+  );
+  return rows;
+}
+
 // ─── Descuentos del revendedor ───────────────────────────────────────────────
 
 export async function getSellerDiscountConfig(pageId) {

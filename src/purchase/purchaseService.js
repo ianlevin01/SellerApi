@@ -113,13 +113,20 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   ]);
   const platformPct = 30; // siempre 30% para calcular el precio base mostrado al vendedor
 
-  // 3. Productos
-  const products = await repo.getProductsByIds(
-    items.map(i => i.product_id),
-    page.id
-  );
+  // 3. Separar ítems: productos normales vs combos
+  const productItems = items.filter(i => i.product_id && !i.combo_id);
+  const comboItems   = items.filter(i => i.combo_id);
 
-  if (!products.length) {
+  const [products, combos] = await Promise.all([
+    productItems.length
+      ? repo.getProductsByIds(productItems.map(i => i.product_id), page.id)
+      : Promise.resolve([]),
+    comboItems.length
+      ? repo.getCombosByIds(comboItems.map(i => i.combo_id), page.id)
+      : Promise.resolve([]),
+  ]);
+
+  if (!products.length && !combos.length) {
     const err = new Error("No se encontraron productos válidos");
     err.status = 400;
     throw err;
@@ -129,10 +136,10 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   const discountConfig = await repo.getSellerDiscountConfig(page.id);
   const discountTiers  = await repo.getSellerDiscountTiers(page.id);
 
-  // 5. Calcular precios de productos (misma fórmula que el store)
-  const { enrichedItems, total: productsTotal } = buildPricedItems({
+  // 5. Calcular precios de productos normales
+  const { enrichedItems: productEnriched, total: productsTotal } = buildPricedItems({
     products,
-    items,
+    items: productItems,
     discountConfig,
     discountTiers,
     cotizacion,
@@ -140,14 +147,35 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
     plan_id,
   });
 
+  // 5b. Agregar combos como ítems enriquecidos (precio fijado por el vendedor, costo real con descuento de plan)
+  const comboEnriched = comboItems.map(item => {
+    const combo = combos.find(c => c.id === item.combo_id);
+    if (!combo) return null;
+    const comboCostUsd = Number(combo.total_cost_usd || 0);
+    const unitCost     = comboCostUsd > 0 ? calcShownCost(comboCostUsd, cotizacion, platformPct, plan_id) : 0;
+    const unitPrice    = Number(combo.custom_price || item.unit_price || 0);
+    return {
+      product_id:         null,
+      combo_id:           combo.id,
+      name:               item.name || combo.name,
+      quantity:           item.quantity || 1,
+      unit_price_base:    unitCost,
+      unit_price_markup:  unitPrice,
+      unit_price_final:   unitPrice,
+      free_shipping:      Boolean(combo.free_shipping),
+    };
+  }).filter(Boolean);
+
+  const combosTotal  = comboEnriched.reduce((s, i) => s + i.unit_price_final * i.quantity, 0);
+  const enrichedItems = [...productEnriched, ...comboEnriched];
+
   // 6. Envío: si todos los ítems tienen free_shipping, el vendedor absorbe el costo real del envío
   const allFreeShipping      = enrichedItems.length > 0 && enrichedItems.every(i => i.free_shipping);
   const realShippingCost     = Number(shipping?.amount || 0);
   const freeShippingAbsorbed = allFreeShipping ? realShippingCost : 0;
 
-  // El comprador paga $0 de envío cuando todos los productos tienen envío gratis
   const shippingAmount = allFreeShipping ? 0 : realShippingCost;
-  const total          = productsTotal + shippingAmount;
+  const total          = productsTotal + combosTotal + shippingAmount;
 
   // 7. Crear la orden en la BD (estado pendiente hasta que MP confirme)
   const order = await repo.createWebOrder({
