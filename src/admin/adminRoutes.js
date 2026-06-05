@@ -1,6 +1,7 @@
 import { Router } from "express";
 import requireAdminJWT from "../middleware/requireAdminJWT.js";
 import * as svc from "./adminService.js";
+import { generateMailHtml } from "./mailingService.js";
 
 const router = Router();
 router.use(requireAdminJWT);
@@ -52,5 +53,15 @@ router.put("/products/:id/cost",             h(req => svc.updateProductCost(req.
 router.put("/products/:id/dimensions",       h(req => svc.updateProductDimensions(req.params.id, req.body)));
 router.get("/price-config",                  h(() => svc.getPriceConfig()));
 router.put("/price-config",                  h(req => svc.updatePriceConfig(req.body.cotizacion)));
+
+// Mailing IA
+router.post("/mailing/generate", async (req, res) => {
+  try {
+    const result = await generateMailHtml(req.body.messages, req.body.currentHtml);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || "Error al generar el email" });
+  }
+});
 
 export default router;

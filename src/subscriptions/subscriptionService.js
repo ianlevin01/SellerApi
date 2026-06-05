@@ -4,6 +4,34 @@ import { transporter } from "../config/mailer.js";
 
 const NOTIFY_EMAIL = "ventaz.oficial@gmail.com";
 
+async function notifyPlanAttempt(sellerId, planName) {
+  try {
+    const pool = (await import("../database/db.js")).default;
+    const { rows } = await pool.query(`SELECT name, email FROM sellers WHERE id = $1`, [sellerId]);
+    const s = rows[0] || {};
+    await transporter.sendMail({
+      from:    process.env.EMAIL_FROM || process.env.SMTP_USER,
+      to:      NOTIFY_EMAIL,
+      subject: `🛒 Intento de compra de plan — ${s.name || s.email || sellerId}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
+          <h2 style="color:#f59e0b">Intento de compra de plan</h2>
+          <p style="color:#64748b;font-size:14px">Un vendedor inició el proceso de pago de una suscripción.</p>
+          <table style="width:100%;border-collapse:collapse">
+            <tr><td style="padding:8px 0;color:#64748b">Vendedor</td><td><strong>${s.name || "—"}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#64748b">Email</td><td>${s.email || "—"}</td></tr>
+            <tr><td style="padding:8px 0;color:#64748b">Plan solicitado</td><td><strong>${planName}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#64748b">Fecha</td><td>${new Date().toLocaleString("es-AR")}</td></tr>
+          </table>
+          <p style="color:#94a3b8;font-size:12px;margin-top:16px">El pago todavía no fue confirmado — se notificará por separado cuando MP confirme.</p>
+        </div>
+      `,
+    });
+  } catch (e) {
+    console.warn("[notify] no se pudo enviar email de intento:", e.message);
+  }
+}
+
 async function notifyPlanPayment(seller, planName, amount) {
   try {
     await transporter.sendMail({
@@ -125,6 +153,9 @@ export async function createSubscription(sellerId, sellerEmail, planId) {
 
   // Recién después guardar pending_plan_id para que el webhook lo use
   await repo.updateSellerSubscription(sellerId, { pending_plan_id: planId });
+
+  // Notificar al equipo que alguien inició el proceso de compra
+  notifyPlanAttempt(sellerId, plan.name || planId).catch(() => {});
 
   return { init_point: initPoint };
 }
