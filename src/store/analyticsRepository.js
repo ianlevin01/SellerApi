@@ -16,6 +16,17 @@ export async function incrementVisit(slug) {
   `, [slug]);
 }
 
+export async function incrementCart(slug) {
+  await pool.query(`
+    INSERT INTO store_analytics_daily (page_id, date, carts)
+    SELECT sp.id, CURRENT_DATE, 1
+    FROM seller_pages sp
+    WHERE sp.slug = $1 AND sp.active = true
+    ON CONFLICT (page_id, date)
+    DO UPDATE SET carts = store_analytics_daily.carts + 1
+  `, [slug]);
+}
+
 /**
  * Devuelve visitas y pedidos por día para una página.
  * Valida que el seller sea dueño de esa página.
@@ -34,7 +45,7 @@ export async function getAnalytics(pageId, sellerId, from, to) {
 
   // Visitas por día
   const { rows: visitRows } = await pool.query(`
-    SELECT date::text, visits AS count
+    SELECT date::text, visits AS count, carts
     FROM store_analytics_daily
     WHERE page_id = $1 AND date BETWEEN $2 AND $3
     ORDER BY date
@@ -56,17 +67,20 @@ export async function getAnalytics(pageId, sellerId, from, to) {
 
   // Totales del período
   const totalVisits  = visitRows.reduce((s, r) => s + Number(r.count), 0);
+  const totalCarts   = visitRows.reduce((s, r) => s + Number(r.carts || 0), 0);
   const totalOrders  = orderRows.reduce((s, r) => s + Number(r.count), 0);
   const totalRevenue = orderRows.reduce((s, r) => s + Number(r.revenue), 0);
 
   return {
-    visits:       visitRows.map(r => ({ date: r.date, count: Number(r.count) })),
+    visits:       visitRows.map(r => ({ date: r.date, count: Number(r.count), carts: Number(r.carts || 0) })),
     orders:       orderRows.map(r => ({ date: r.date, count: Number(r.count), revenue: Number(r.revenue) })),
     totals: {
       visits:     totalVisits,
+      carts:      totalCarts,
       orders:     totalOrders,
       revenue:    totalRevenue,
       conversion: totalVisits > 0 ? Math.round((totalOrders / totalVisits) * 1000) / 10 : 0,
+      cart_rate:  totalVisits > 0 ? Math.round((totalCarts / totalVisits) * 1000) / 10 : 0,
     },
   };
 }

@@ -217,7 +217,14 @@ export async function trackVisit(req, res) {
   try {
     await analyticsRepo.incrementVisit(req.params.slug);
     return res.status(204).end();
-  } catch { return res.status(204).end(); } // silencioso
+  } catch { return res.status(204).end(); }
+}
+
+export async function trackCart(req, res) {
+  try {
+    await analyticsRepo.incrementCart(req.params.slug);
+    return res.status(204).end();
+  } catch { return res.status(204).end(); }
 }
 
 export async function getPageAnalytics(req, res) {

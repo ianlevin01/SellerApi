@@ -49,6 +49,7 @@ router.get ("/pages/:pageId/analytics",     requireSeller, storeController.getPa
 
 // ── Públicas (tienda visible para compradores) ────────────────
 router.post("/public/:slug/track/visit",           storeController.trackVisit);
+router.post("/public/:slug/track/cart",            storeController.trackCart);
 router.get ("/public/:slug",                       storeController.getPublicStore);
 router.post("/public/:slug/order",                 storeController.createPublicOrder);
 router.post("/public/:slug/checkout",              storeController.createCheckout);
