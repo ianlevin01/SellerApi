@@ -39,7 +39,7 @@ export async function generateMailHtml(messages = [], currentHtml) {
   const client = getClient();
 
   const completion = await client.chat.completions.create({
-    model:           "gpt-4o",
+    model:           "gpt-4o-mini",
     max_tokens:      4096,
     temperature:     0.3,
     response_format: { type: "json_object" },
