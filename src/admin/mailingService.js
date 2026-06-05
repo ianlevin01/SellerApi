@@ -96,6 +96,8 @@ export async function generateMailHtml(messages = [], currentHtml) {
 
 const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`;
 
+const TEXT_FALLBACK = "Este mensaje fue enviado desde Ventaz. Si estás viendo este texto, tu cliente de mail no soporta HTML.";
+
 export async function sendTestMail({ html, subject }) {
   if (!html) throw { status: 400, message: "html es requerido" };
   await transporter.sendMail({
@@ -103,6 +105,7 @@ export async function sendTestMail({ html, subject }) {
     to:      "ventaz.oficial@gmail.com",
     subject: subject || "Mail de prueba — Ventaz",
     html,
+    text:    TEXT_FALLBACK,
   });
   return { ok: true, sent: 1 };
 }
@@ -124,9 +127,9 @@ export async function sendMassMail({ html, subject }) {
         to:      email,
         subject: subject || "Novedades de Ventaz",
         html,
+        text:    TEXT_FALLBACK,
       });
       sent++;
-      // Pausa pequeña para no saturar el SMTP
       await new Promise(r => setTimeout(r, 120));
     } catch (e) {
       console.warn(`[mailing] falló envío a ${email}:`, e.message);
