@@ -10,7 +10,26 @@ function getClient() {
   return openaiClient;
 }
 
-const SYSTEM_PROMPT = (currentHtml) => `
+// Saca los base64 del HTML antes de mandarlo a la IA (pueden ser cientos de KB)
+// y los restaura en el HTML que devuelve la IA.
+function stripBase64(html) {
+  const blobs = [];
+  const stripped = html.replace(/src="(data:[^"]{20,})"/g, (_match, src) => {
+    const idx = blobs.length;
+    blobs.push(src);
+    return `src="__BLOB_${idx}__"`;
+  });
+  return { stripped, blobs };
+}
+
+function restoreBase64(html, blobs) {
+  if (!blobs.length) return html;
+  return html.replace(/src="__BLOB_(\d+)__"/g, (_match, idx) => {
+    return `src="${blobs[parseInt(idx)] ?? ""}"`;
+  });
+}
+
+const SYSTEM_PROMPT = (html) => `
 Sos un diseñador experto en emails HTML para la plataforma Ventaz (Argentina).
 Tu única tarea es modificar el HTML del email que te dan según las instrucciones del usuario.
 
@@ -22,13 +41,13 @@ REGLAS CRÍTICAS:
 - Mantené siempre el diseño de Ventaz: fondo oscuro #07110d, verde #4bff9c, tipografía Arial
 - No cambies la estructura base a menos que explícitamente te lo pidan
 - Si te piden un link y no te dan la URL, usá href="#" como placeholder
-- Si te piden cambiar solo el contenido (texto, título, etc.) no toques los estilos ni la estructura
+- Las imágenes con src="__BLOB_N__" son placeholders — NO las elimines, dejálas exactamente igual
 - El campo "html" debe ser el HTML completo del email (desde <!DOCTYPE html> hasta </html>)
 - Nunca incluyas explicaciones fuera del JSON, solo el JSON
 
 HTML ACTUAL DEL EMAIL:
 \`\`\`html
-${currentHtml}
+${html}
 \`\`\`
 `.trim();
 
@@ -38,14 +57,23 @@ export async function generateMailHtml(messages = [], currentHtml) {
 
   const client = getClient();
 
+  // Sacar base64 antes de mandar a la IA
+  const { stripped, blobs } = stripBase64(currentHtml);
+
+  // Solo mandar los últimos 10 mensajes para no inflar el contexto
+  const trimmedMessages = messages.slice(-10).map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
   const completion = await client.chat.completions.create({
     model:           "gpt-4o-mini",
     max_tokens:      4096,
     temperature:     0.3,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: SYSTEM_PROMPT(currentHtml) },
-      ...messages.map(m => ({ role: m.role, content: m.content })),
+      { role: "system", content: SYSTEM_PROMPT(stripped) },
+      ...trimmedMessages,
     ],
   });
 
@@ -60,5 +88,6 @@ export async function generateMailHtml(messages = [], currentHtml) {
     throw { status: 500, message: "Respuesta incompleta de la IA" };
   }
 
-  return { html: result.html, message: result.message };
+  // Restaurar los base64 en el HTML que devolvió la IA
+  return { html: restoreBase64(result.html, blobs), message: result.message };
 }
