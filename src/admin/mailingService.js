@@ -98,13 +98,21 @@ const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`
 
 const TEXT_FALLBACK = "Este mensaje fue enviado desde Ventaz. Si estás viendo este texto, tu cliente de mail no soporta HTML.";
 
+// Los base64 hacen el email demasiado pesado para clientes de mail.
+// Los reemplazamos por la URL pública del logo.
+const LOGO_URL = "https://ventaz.com.ar/ventaz.png";
+function prepareHtmlForSend(html) {
+  return html.replace(/src="data:[^"]+"/g, `src="${LOGO_URL}"`);
+}
+
 export async function sendTestMail({ html, subject }) {
   if (!html) throw { status: 400, message: "html es requerido" };
+  const cleanHtml = prepareHtmlForSend(html);
   await transporter.sendMail({
     from:    FROM(),
     to:      "ventaz.oficial@gmail.com",
     subject: subject || "Mail de prueba — Ventaz",
-    html,
+    html:    cleanHtml,
     text:    TEXT_FALLBACK,
   });
   return { ok: true, sent: 1 };
@@ -112,6 +120,7 @@ export async function sendTestMail({ html, subject }) {
 
 export async function sendMassMail({ html, subject }) {
   if (!html) throw { status: 400, message: "html es requerido" };
+  const cleanHtml = prepareHtmlForSend(html);
 
   const { rows } = await pool.query(
     `SELECT email FROM sellers WHERE active = true ORDER BY created_at`
@@ -126,7 +135,7 @@ export async function sendMassMail({ html, subject }) {
         from:    FROM(),
         to:      email,
         subject: subject || "Novedades de Ventaz",
-        html,
+        html:    cleanHtml,
         text:    TEXT_FALLBACK,
       });
       sent++;
