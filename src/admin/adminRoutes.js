@@ -1,7 +1,7 @@
 import { Router } from "express";
 import requireAdminJWT from "../middleware/requireAdminJWT.js";
 import * as svc from "./adminService.js";
-import { generateMailHtml } from "./mailingService.js";
+import { generateMailHtml, sendTestMail, sendMassMail } from "./mailingService.js";
 
 const router = Router();
 router.use(requireAdminJWT);
@@ -61,6 +61,24 @@ router.post("/mailing/generate", async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message || "Error al generar el email" });
+  }
+});
+
+router.post("/mailing/send-test", async (req, res) => {
+  try {
+    const result = await sendTestMail(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || "Error al enviar" });
+  }
+});
+
+router.post("/mailing/send-mass", async (req, res) => {
+  try {
+    const result = await sendMassMail(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || "Error al enviar" });
   }
 });
 

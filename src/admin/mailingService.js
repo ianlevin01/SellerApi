@@ -1,5 +1,7 @@
 // src/admin/mailingService.js
 import OpenAI from "openai";
+import { transporter } from "../config/mailer.js";
+import pool from "../database/db.js";
 
 let openaiClient = null;
 function getClient() {
@@ -90,4 +92,47 @@ export async function generateMailHtml(messages = [], currentHtml) {
 
   // Restaurar los base64 en el HTML que devolvió la IA
   return { html: restoreBase64(result.html, blobs), message: result.message };
+}
+
+const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`;
+
+export async function sendTestMail({ html, subject }) {
+  if (!html) throw { status: 400, message: "html es requerido" };
+  await transporter.sendMail({
+    from:    FROM(),
+    to:      "ventaz.oficial@gmail.com",
+    subject: subject || "Mail de prueba — Ventaz",
+    html,
+  });
+  return { ok: true, sent: 1 };
+}
+
+export async function sendMassMail({ html, subject }) {
+  if (!html) throw { status: 400, message: "html es requerido" };
+
+  const { rows } = await pool.query(
+    `SELECT email FROM sellers WHERE active = true ORDER BY created_at`
+  );
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const { email } of rows) {
+    try {
+      await transporter.sendMail({
+        from:    FROM(),
+        to:      email,
+        subject: subject || "Novedades de Ventaz",
+        html,
+      });
+      sent++;
+      // Pausa pequeña para no saturar el SMTP
+      await new Promise(r => setTimeout(r, 120));
+    } catch (e) {
+      console.warn(`[mailing] falló envío a ${email}:`, e.message);
+      failed++;
+    }
+  }
+
+  return { ok: true, sent, failed, total: rows.length };
 }
