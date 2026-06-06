@@ -125,11 +125,13 @@ export async function getAllOrders({ sellerId, status, from, to, limit = 100, of
   params.push(limit, offset);
 
   const { rows } = await pool.query(`
-    SELECT wo.id, wo.numero, wo.customer_name, wo.customer_email, wo.customer_city,
+    SELECT wo.id, wo.numero, wo.customer_name, wo.customer_email, wo.customer_phone,
+           wo.customer_city, wo.observaciones,
            wo.total, wo.shipping_amount, wo.color, wo.created_at, wo.mp_payment_id,
            s.name AS seller_name, s.email AS seller_email,
            COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price))
-             FROM web_order_items woi WHERE woi.web_order_id = wo.id),'[]') AS items
+             FROM web_order_items woi WHERE woi.web_order_id = wo.id),'[]') AS items,
+           (SELECT row_to_json(os) FROM order_shipping os WHERE os.web_order_id = wo.id LIMIT 1) AS shipping
     FROM web_orders wo
     JOIN sellers s ON s.id = wo.seller_id
     ${where}

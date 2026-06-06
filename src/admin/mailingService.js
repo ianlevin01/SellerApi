@@ -33,18 +33,24 @@ function restoreBase64(html, blobs) {
 
 const SYSTEM_PROMPT = (html) => `
 Sos un diseñador experto en emails HTML para la plataforma Ventaz (Argentina).
-Tu única tarea es modificar el HTML del email que te dan según las instrucciones del usuario.
+Tu única tarea es modificar el HTML del email según las instrucciones del usuario, asegurándote de que el resultado sea 100% compatible con clientes de email como Gmail y Outlook.
 
-REGLAS CRÍTICAS:
+REGLAS CRÍTICAS — COMPATIBILIDAD CON EMAIL:
+- Usá SIEMPRE estilos inline (style="...") — nunca CSS en <style> ni clases CSS
+- Usá tablas (<table><tr><td>) para el layout, no divs ni flexbox
+- NO uses: CSS variables (var(--x)), animaciones (@keyframes), ::before/::after, position:absolute, conic-gradient, radial-gradient, display:flex, display:grid
+- Los colores de Ventaz que tenés que mantener: fondo #07110d, verde #4bff9c, texto blanco #ffffff, texto suave #cfe5d8
+- Tipografía: font-family: Arial, Helvetica, sans-serif
+- Ancho máximo del contenedor: 640px centrado con margin:0 auto
+- Para botones: tabla de 1 celda con background-color en el <td> y el <a> con display:inline-block
+
+REGLAS GENERALES:
 - Respondé SIEMPRE con un JSON válido con exactamente dos campos:
-  "html": string con el HTML completo del email (bien formateado)
+  "html": string con el HTML completo del email (desde <!DOCTYPE html> hasta </html>)
   "message": string corto en español argentino explicando qué cambiaste (máx 2 oraciones)
-- El HTML debe ser compatible con clientes de email (Gmail, Outlook): usá tablas, estilos inline
-- Mantené siempre el diseño de Ventaz: fondo oscuro #07110d, verde #4bff9c, tipografía Arial
-- No cambies la estructura base a menos que explícitamente te lo pidan
+- No cambies el contenido a menos que te lo pidan — solo el formato si es necesario
 - Si te piden un link y no te dan la URL, usá href="#" como placeholder
-- Las imágenes con src="__BLOB_N__" son placeholders — NO las elimines, dejálas exactamente igual
-- El campo "html" debe ser el HTML completo del email (desde <!DOCTYPE html> hasta </html>)
+- Las imágenes con src="__BLOB_N__" son placeholders — NO las elimines
 - Nunca incluyas explicaciones fuera del JSON, solo el JSON
 
 HTML ACTUAL DEL EMAIL:
@@ -98,11 +104,10 @@ const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`
 
 const TEXT_FALLBACK = "Este mensaje fue enviado desde Ventaz. Si estás viendo este texto, tu cliente de mail no soporta HTML.";
 
-// Los base64 hacen el email demasiado pesado para clientes de mail.
-// Los reemplazamos por la URL pública del logo.
-const LOGO_URL = "https://ventaz.com.ar/ventaz.png";
+// Saca base64 antes de enviar (demasiado pesados para clientes de mail).
+// El logo queda con src="" — Gmail lo omite, no lo muestra roto.
 function prepareHtmlForSend(html) {
-  return html.replace(/src="data:[^"]+"/g, `src="${LOGO_URL}"`);
+  return html.replace(/src="data:[^"]+"/g, 'src=""');
 }
 
 export async function sendTestMail({ html, subject }) {
