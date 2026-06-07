@@ -94,3 +94,11 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
 startStockListener();
+
+// Evita que la API crashee por promesas rechazadas sin capturar
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason?.message || reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err?.message || err);
+});
