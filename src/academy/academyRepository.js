@@ -134,23 +134,25 @@ export async function adminDeleteCourse(courseId) {
   await pool.query(`DELETE FROM academy_courses WHERE id = $1`, [courseId]);
 }
 
-export async function adminCreateSection(courseId, { title, content_md, video_url, image_urls, sort_order, duration_min }) {
+export async function adminCreateSection(courseId, { title, content_md, video_url, image_urls, sort_order, duration_min, chapters }) {
   const { rows } = await pool.query(
-    `INSERT INTO academy_sections (course_id, title, content_md, video_url, image_urls, sort_order, duration_min)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    `INSERT INTO academy_sections (course_id, title, content_md, video_url, image_urls, sort_order, duration_min, chapters)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [courseId, title, content_md || null, video_url || null,
-     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0]
+     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0,
+     JSON.stringify(chapters || [])]
   );
   return rows[0];
 }
 
-export async function adminUpdateSection(sectionId, { title, content_md, video_url, image_urls, sort_order, duration_min }) {
+export async function adminUpdateSection(sectionId, { title, content_md, video_url, image_urls, sort_order, duration_min, chapters }) {
   const { rows } = await pool.query(
     `UPDATE academy_sections
-     SET title=$1, content_md=$2, video_url=$3, image_urls=$4, sort_order=$5, duration_min=$6
-     WHERE id=$7 RETURNING *`,
+     SET title=$1, content_md=$2, video_url=$3, image_urls=$4, sort_order=$5, duration_min=$6, chapters=$7
+     WHERE id=$8 RETURNING *`,
     [title, content_md || null, video_url || null,
-     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0, sectionId]
+     JSON.stringify(image_urls || []), sort_order || 0, duration_min || 0,
+     JSON.stringify(chapters || []), sectionId]
   );
   return rows[0];
 }

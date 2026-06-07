@@ -19,7 +19,8 @@ import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerCh
 import onboardingRoutes    from "./onboarding/onboardingRoutes.js";
 import subscriptionRoutes from "./subscriptions/subscriptionRoutes.js";
 import academyRoutes      from "./academy/academyRoutes.js";
-import { startStockListener } from "./stock/stockListener.js";
+import { startStockListener }    from "./stock/stockListener.js";
+import { startCampaignScheduler } from "./email/campaignService.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -94,6 +95,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
 startStockListener();
+startCampaignScheduler();
 
 // Evita que la API crashee por promesas rechazadas sin capturar
 process.on("unhandledRejection", (reason) => {
