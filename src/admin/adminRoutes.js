@@ -47,6 +47,13 @@ router.get("/reports/sales", h(req => svc.getSalesReport({
   sellerId: req.query.seller_id || null,
 })));
 
+// Store analytics (admin, no ownership check)
+router.get("/pages/:pageId/analytics", h(req => svc.getPageAnalytics(
+  req.params.pageId,
+  req.query.from,
+  req.query.to,
+)));
+
 // Catalog
 router.get("/products",                      h(() => svc.getProducts()));
 router.put("/products/:id/cost",             h(req => svc.updateProductCost(req.params.id, req.body.cost)));

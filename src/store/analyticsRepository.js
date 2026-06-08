@@ -1,10 +1,6 @@
 // src/store/analyticsRepository.js
 import pool from "../database/db.js";
 
-/**
- * Incrementa (o crea) el contador de visitas del día para una tienda.
- * Se llama desde la tienda pública sin autenticación.
- */
 export async function incrementVisit(slug) {
   await pool.query(`
     INSERT INTO store_analytics_daily (page_id, date, visits)
@@ -27,23 +23,7 @@ export async function incrementCart(slug) {
   `, [slug]);
 }
 
-/**
- * Devuelve visitas y pedidos por día para una página.
- * Valida que el seller sea dueño de esa página.
- */
-export async function getAnalytics(pageId, sellerId, from, to) {
-  // Verificar propiedad
-  const { rows: pageRows } = await pool.query(
-    `SELECT id FROM seller_pages WHERE id = $1 AND seller_id = $2`,
-    [pageId, sellerId]
-  );
-  if (!pageRows.length) {
-    const err = new Error("Página no encontrada");
-    err.status = 404;
-    throw err;
-  }
-
-  // Visitas por día
+async function _analyticsQuery(pageId, sellerId, from, to) {
   const { rows: visitRows } = await pool.query(`
     SELECT date::text, visits AS count, carts
     FROM store_analytics_daily
@@ -51,7 +31,6 @@ export async function getAnalytics(pageId, sellerId, from, to) {
     ORDER BY date
   `, [pageId, from, to]);
 
-  // Pedidos por día (con revenue)
   const { rows: orderRows } = await pool.query(`
     SELECT
       DATE(wo.created_at)::text AS date,
@@ -65,15 +44,14 @@ export async function getAnalytics(pageId, sellerId, from, to) {
     ORDER BY DATE(wo.created_at)
   `, [sellerId, from, to]);
 
-  // Totales del período
   const totalVisits  = visitRows.reduce((s, r) => s + Number(r.count), 0);
   const totalCarts   = visitRows.reduce((s, r) => s + Number(r.carts || 0), 0);
   const totalOrders  = orderRows.reduce((s, r) => s + Number(r.count), 0);
   const totalRevenue = orderRows.reduce((s, r) => s + Number(r.revenue), 0);
 
   return {
-    visits:       visitRows.map(r => ({ date: r.date, count: Number(r.count), carts: Number(r.carts || 0) })),
-    orders:       orderRows.map(r => ({ date: r.date, count: Number(r.count), revenue: Number(r.revenue) })),
+    visits: visitRows.map(r => ({ date: r.date, count: Number(r.count), carts: Number(r.carts || 0) })),
+    orders: orderRows.map(r => ({ date: r.date, count: Number(r.count), revenue: Number(r.revenue) })),
     totals: {
       visits:     totalVisits,
       carts:      totalCarts,
@@ -83,4 +61,22 @@ export async function getAnalytics(pageId, sellerId, from, to) {
       cart_rate:  totalVisits > 0 ? Math.round((totalCarts / totalVisits) * 1000) / 10 : 0,
     },
   };
+}
+
+// Admin: no ownership check, looks up seller_id from the page row.
+export async function getAnalyticsAdmin(pageId, from, to) {
+  const { rows } = await pool.query(
+    `SELECT id, seller_id FROM seller_pages WHERE id = $1`, [pageId]
+  );
+  if (!rows.length) { const e = new Error("Página no encontrada"); e.status = 404; throw e; }
+  return _analyticsQuery(pageId, rows[0].seller_id, from, to);
+}
+
+// Seller: verifies ownership before returning data.
+export async function getAnalytics(pageId, sellerId, from, to) {
+  const { rows } = await pool.query(
+    `SELECT id FROM seller_pages WHERE id = $1 AND seller_id = $2`, [pageId, sellerId]
+  );
+  if (!rows.length) { const e = new Error("Página no encontrada"); e.status = 404; throw e; }
+  return _analyticsQuery(pageId, sellerId, from, to);
 }

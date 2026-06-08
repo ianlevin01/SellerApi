@@ -1,4 +1,5 @@
 import * as repo from "./adminRepository.js";
+import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
 import { notifySellerCvuVerified } from "../email/buyerEmails.js";
 
 export async function getDashboard() {
@@ -78,6 +79,10 @@ export async function updateProductCost(productId, cost) {
   if (!cost || Number(cost) <= 0) throw { status: 400, message: "Costo inválido" };
   await repo.updateProductCost(productId, Number(cost));
   return { message: "Costo actualizado" };
+}
+
+export async function getPageAnalytics(pageId, from, to) {
+  return getAnalyticsAdmin(pageId, from, to);
 }
 
 export async function getPriceConfig() {
