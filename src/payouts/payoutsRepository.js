@@ -50,7 +50,9 @@ export async function getBalanceSummary(sellerId) {
   const { rows } = await pool.query(
     `SELECT
        COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN amount END), 0) AS pending_total,
-       COALESCE(SUM(CASE WHEN status = 'available'        THEN amount END), 0) AS available_total
+       COALESCE(SUM(CASE WHEN status = 'available'
+                          AND (available_at IS NULL OR available_at <= NOW())
+                    THEN amount END), 0) AS available_total
      FROM seller_earnings
      WHERE seller_id = $1`,
     [sellerId]
@@ -139,13 +141,15 @@ export async function getPayouts(sellerId) {
 }
 
 export async function markPayoutTransferred(payoutId) {
-  const { rowCount } = await pool.query(
-    `UPDATE seller_payouts
+  const { rows } = await pool.query(
+    `UPDATE seller_payouts sp
      SET status = 'transferido', transferred_at = NOW()
-     WHERE id = $1 AND status = 'en_proceso'`,
+     FROM sellers s
+     WHERE sp.id = $1 AND sp.status = 'en_proceso' AND s.id = sp.seller_id
+     RETURNING sp.amount, sp.cvu, s.name AS seller_name, s.email AS seller_email`,
     [payoutId]
   );
-  return rowCount > 0;
+  return rows[0] || null;
 }
 
 // ── Helpers para calcular ganancias ──────────────────────────

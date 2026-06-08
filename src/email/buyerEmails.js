@@ -560,3 +560,90 @@ export async function notifySellerCvuVerified({ sellerEmail, sellerName, cvu, al
     console.error("[email] notifySellerCvuVerified error:", err.message);
   }
 }
+
+export async function notifySellerPayoutTransferred(sellerEmail, sellerName, amount, cvu) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const first     = sellerName?.split(" ")[0] || "ahí";
+  const fmtAmount = `$${Number(amount || 0).toLocaleString("es-AR", { maximumFractionDigits: 0 })}`;
+  const cvuDisplay = cvu ? `${cvu.slice(0, 4)} •••• •••• •••• ${cvu.slice(-4)}` : "—";
+
+  const html = baseLayout(`
+    <!-- Ícono de éxito -->
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;background:#f0fdf4;border-radius:50%;border:2px solid #bbf7d0">
+        <span style="font-size:32px;line-height:1">💸</span>
+      </div>
+    </div>
+
+    <h2 style="margin:0 0 8px;font-size:22px;font-weight:800;color:#111827;text-align:center">
+      ¡Tu transferencia está en camino, ${first}!
+    </h2>
+    <p style="margin:0 0 28px;font-size:14px;color:#6b7280;text-align:center;line-height:1.6">
+      Procesamos tu pago exitosamente. El dinero estará en tu cuenta en las próximas horas.
+    </p>
+
+    <!-- Monto destacado -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px">
+      <tr>
+        <td style="background:linear-gradient(135deg,${BRAND} 0%,${BRAND_D} 100%);border-radius:14px;padding:24px 28px;text-align:center">
+          <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.1em">Monto transferido</p>
+          <p style="margin:0;font-size:40px;font-weight:900;color:#fff;letter-spacing:-1px">${fmtAmount}</p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Detalle -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:0;margin-bottom:24px;overflow:hidden">
+      <tr>
+        <td style="padding:14px 20px;border-bottom:1px solid #e5e7eb">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="font-size:13px;color:#6b7280">Destino (CVU/CBU)</td>
+              <td style="font-size:13px;font-weight:700;color:#111827;text-align:right;font-family:monospace">${cvuDisplay}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:14px 20px">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="font-size:13px;color:#6b7280">Estado</td>
+              <td style="text-align:right">
+                <span style="display:inline-block;background:#f0fdf4;color:#166534;font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;border:1px solid #bbf7d0">Transferido ✓</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0 0 24px;font-size:13px;color:#6b7280;line-height:1.65;text-align:center">
+      Los tiempos de acreditación dependen de tu banco o billetera virtual.<br/>
+      Si tenés alguna consulta, escribinos desde el panel.
+    </p>
+
+    <!-- CTA -->
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td align="center">
+          <a href="${PANEL_URL}/payouts"
+             style="display:inline-block;background:${BRAND};color:#fff;font-size:15px;font-weight:700;text-decoration:none;padding:15px 36px;border-radius:10px;letter-spacing:.01em">
+            Ver mis cobros →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `);
+
+  try {
+    await transporter.sendMail({
+      from:    FROM,
+      to:      sellerEmail,
+      subject: `💸 Transferencia realizada — ${fmtAmount} en camino a tu cuenta`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifySellerPayoutTransferred error:", err.message);
+  }
+}

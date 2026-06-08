@@ -1,6 +1,7 @@
 import * as repo from "./payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan, getPlanPayoutDays } from "../utils/sellerPlan.js";
+import { notifySellerPayoutTransferred } from "../email/buyerEmails.js";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -175,12 +176,13 @@ export async function approveOrderEarning(webOrderId) {
 }
 
 export async function markPayoutTransferred(payoutId) {
-  const updated = await repo.markPayoutTransferred(payoutId);
-  if (!updated) {
+  const payout = await repo.markPayoutTransferred(payoutId);
+  if (!payout) {
     const err = new Error("No se encontró el pago o ya fue marcado como transferido");
     err.status = 404;
     throw err;
   }
+  notifySellerPayoutTransferred(payout.seller_email, payout.seller_name, payout.amount, payout.cvu);
 }
 
 // ── Solicitar transferencia ───────────────────────────────────

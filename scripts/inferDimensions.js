@@ -8,15 +8,17 @@
  *   node scripts/inferDimensions.js --limit 20 # limita la cantidad a procesar
  */
 
-import "dotenv/config";
 import { readFile, writeFile, access } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { config } from "dotenv";
 import OpenAI from "openai";
 import pool from "../src/database/db.js";
 import { signKey } from "../src/utils/s3Client.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: join(__dirname, "../.env") });
+
 const PROGRESS_FILE = join(__dirname, "infer_progress.json");
 const DELAY_MS = 250; // ms entre llamadas a la API
 
@@ -124,6 +126,11 @@ function sleep(ms) {
 }
 
 async function main() {
+  if (DRY) {
+    console.log("=".repeat(60));
+    console.log("  ⚠️  DRY RUN — no se guarda nada en la base de datos");
+    console.log("=".repeat(60));
+  }
   console.log(`[inferDimensions] modo: ${DRY ? "DRY RUN" : "LIVE"} | scope: ${ALL ? "todos" : "solo NULL"}`);
 
   const products = await getProducts();
@@ -177,7 +184,22 @@ async function main() {
     );
 
     if (!DRY) {
-      await updateProduct(product.id, weight, volume);
+      try {
+        const result = await pool.query(
+          `UPDATE products SET weight_grams = $1, volume_cm3 = $2 WHERE id = $3 RETURNING id`,
+          [weight, volume, product.id]
+        );
+        if (result.rowCount === 0) {
+          console.error(`  ✗ ${product.name}: UPDATE no encontró el producto en la BD (id=${product.id})`);
+          errors++;
+          continue;
+        }
+        console.log(`     ✓ guardado en BD`);
+      } catch (dbErr) {
+        console.error(`  ✗ ${product.name}: error al guardar → ${dbErr.message}`);
+        errors++;
+        continue;
+      }
       done.add(product.id);
       if (processed % 20 === 0) await saveProgress(done);
     }
