@@ -49,7 +49,8 @@ export async function getAllSellers() {
       COUNT(DISTINCT sp.id)  FILTER (WHERE sp.active = true) AS pages_active,
       COUNT(DISTINCT wo.id)                                  AS orders_total,
       COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'available'), 0) AS balance_available,
-      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'pending_approval'), 0) AS balance_pending
+      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'pending_approval'), 0) AS balance_pending,
+      ARRAY_REMOVE(ARRAY_AGG(DISTINCT sp.store_name), NULL) AS store_names
     FROM sellers s
     LEFT JOIN seller_pages sp ON sp.seller_id = s.id
     LEFT JOIN web_orders wo ON wo.seller_id = s.id
