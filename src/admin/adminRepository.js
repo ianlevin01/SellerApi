@@ -182,9 +182,14 @@ export async function getAllPayouts(status) {
 
 export async function markPayoutTransferred(id) {
   const { rows } = await pool.query(
-    `UPDATE seller_payouts SET status = 'transferido', transferred_at = now()
-     WHERE id = $1 AND status = 'en_proceso' RETURNING *`, [id]);
-  return rows[0];
+    `UPDATE seller_payouts sp
+     SET status = 'transferido', transferred_at = now()
+     FROM sellers s
+     WHERE sp.id = $1 AND sp.status = 'en_proceso' AND s.id = sp.seller_id
+     RETURNING sp.amount, sp.cvu, s.name AS seller_name, s.email AS seller_email`,
+    [id]
+  );
+  return rows[0] || null;
 }
 
 // ── Sales report ─────────────────────────────────────────────

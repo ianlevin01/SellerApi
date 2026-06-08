@@ -1,6 +1,6 @@
 import * as repo from "./adminRepository.js";
 import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
-import { notifySellerCvuVerified } from "../email/buyerEmails.js";
+import { notifySellerCvuVerified, notifySellerPayoutTransferred } from "../email/buyerEmails.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -68,6 +68,7 @@ export async function getPayouts(status) {
 export async function markPayoutTransferred(id) {
   const payout = await repo.markPayoutTransferred(id);
   if (!payout) throw { status: 404, message: "Pago no encontrado o ya transferido" };
+  notifySellerPayoutTransferred(payout.seller_email, payout.seller_name, payout.amount, payout.cvu);
   return payout;
 }
 
