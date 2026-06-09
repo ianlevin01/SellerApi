@@ -227,12 +227,19 @@ export async function trackCart(req, res) {
   } catch { return res.status(204).end(); }
 }
 
+function toART(d) {
+  // UTC-3, no DST
+  const art = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  return art.toISOString().slice(0, 10);
+}
+
 export async function getPageAnalytics(req, res) {
   try {
     const { pageId } = req.params;
     const sellerId   = req.seller.id;
-    const from = req.query.from || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-    const to   = req.query.to   || new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const from = req.query.from || toART(new Date(now.getTime() - 29 * 86400000));
+    const to   = req.query.to   || toART(now);
     const data = await analyticsRepo.getAnalytics(pageId, sellerId, from, to);
     return res.json(data);
   } catch (err) { handleError(res, err); }

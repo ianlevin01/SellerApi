@@ -189,6 +189,59 @@ function tmpl_noProducts(name) {
   };
 }
 
+function tmpl_trial_expiring(name, trialEndsAt) {
+  const first = name?.split(" ")[0] || "ahí";
+  const endDate = new Date(trialEndsAt);
+  const dateStr = endDate.toLocaleDateString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    weekday: "long", day: "numeric", month: "long",
+  });
+  return {
+    subject: `⏰ Tu prueba gratuita termina mañana, ${first}`,
+    html: layout(`
+      <!-- Urgency badge -->
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">⏰</span>
+        <span style="font-size:14px;font-weight:700;color:#dc2626">Tu prueba gratuita termina mañana</span>
+      </div>
+
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:800;color:#111827">
+        Hola, ${first} — te queda 1 día
+      </h2>
+      <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7">
+        Tu período de prueba gratuita <strong>vence el ${dateStr}</strong>. No pierdas el acceso a tu tienda ni a todas las funciones de Ventaz.
+      </p>
+
+      <!-- Countdown card -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
+        <tr>
+          <td style="background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);border-radius:14px;padding:22px 28px;text-align:center">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.1em">Tiempo restante</p>
+            <p style="margin:0;font-size:36px;font-weight:900;color:#fff;letter-spacing:-1px">1 día</p>
+            <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,.7)">Vence el ${dateStr}</p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Benefits of upgrading -->
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:18px 20px;margin-bottom:20px">
+        <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#166534">✅ ¿Qué mantenés al suscribirte?</p>
+        <table cellpadding="0" cellspacing="0" width="100%">
+          <tr><td style="padding:3px 0;font-size:13px;color:#374151">✔ &nbsp;Tu tienda online activa y visible</td></tr>
+          <tr><td style="padding:3px 0;font-size:13px;color:#374151">✔ &nbsp;Todos tus productos configurados</td></tr>
+          <tr><td style="padding:3px 0;font-size:13px;color:#374151">✔ &nbsp;Tu historial de ventas y ganancias</td></tr>
+          <tr><td style="padding:3px 0;font-size:13px;color:#374151">✔ &nbsp;Cobros vía MercadoPago y transferencias</td></tr>
+        </table>
+      </div>
+
+      <p style="margin:0 0 8px;font-size:13px;color:#6b7280;line-height:1.65">
+        Sin suscripción, tu tienda quedará inactiva y tus clientes no podrán ver ni comprar tus productos.
+        Elegí un plan y seguí vendiendo sin interrupciones.
+      </p>
+    `, "Ver planes y suscribirme →", `${PANEL_URL}/subscription`),
+  };
+}
+
 function tmpl_noSales(name) {
   const first = name?.split(" ")[0] || "ahí";
   return {
@@ -270,6 +323,8 @@ async function getSellers() {
       s.email,
       s.last_active_at,
       s.created_at,
+      s.plan_status,
+      s.trial_ends_at,
       (SELECT COUNT(*)
        FROM seller_pages sp
        WHERE sp.seller_id = s.id
@@ -343,6 +398,14 @@ async function pickEmail(seller) {
   const products = seller.product_count;
   const orders   = seller.paid_orders;
 
+  // 0. Trial por vencer (máxima prioridad — ventana de 36h para no perdérselo)
+  if (seller.plan_status === "trial" && seller.trial_ends_at) {
+    const hoursLeft = (new Date(seller.trial_ends_at) - now) / 3600000;
+    if (hoursLeft > 0 && hoursLeft <= 36 && !(await typeSentEver(seller.id, "trial_expiring_1d"))) {
+      return "trial_expiring_1d";
+    }
+  }
+
   // 1. Primera venta (solo se manda una vez)
   if (orders > 0 && !(await typeSentEver(seller.id, "first_sale"))) {
     return "first_sale";
@@ -394,6 +457,7 @@ export async function runCampaigns() {
   let skipped = 0;
 
   const TEMPLATES = {
+    trial_expiring_1d: (name, seller) => tmpl_trial_expiring(name, seller.trial_ends_at),
     inactive_7d:  tmpl_inactive7d,
     inactive_15d: tmpl_inactive15d,
     inactive_30d: tmpl_inactive30d,
@@ -411,7 +475,7 @@ export async function runCampaigns() {
       const type = await pickEmail(seller);
       if (!type) { skipped++; continue; }
 
-      const { subject, html } = TEMPLATES[type](seller.name);
+      const { subject, html } = TEMPLATES[type](seller.name, seller);
       await transporter.sendMail({ from: FROM, to: seller.email, subject, html });
       await logEmail(seller.id, type);
       console.log(`[campaign] ${type} → ${seller.email}`);

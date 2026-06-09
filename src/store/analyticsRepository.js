@@ -1,10 +1,12 @@
 // src/store/analyticsRepository.js
 import pool from "../database/db.js";
 
+const ART = "America/Argentina/Buenos_Aires";
+
 export async function incrementVisit(slug) {
   await pool.query(`
     INSERT INTO store_analytics_daily (page_id, date, visits)
-    SELECT sp.id, CURRENT_DATE, 1
+    SELECT sp.id, (NOW() AT TIME ZONE '${ART}')::date, 1
     FROM seller_pages sp
     WHERE sp.slug = $1 AND sp.active = true
     ON CONFLICT (page_id, date)
@@ -15,7 +17,7 @@ export async function incrementVisit(slug) {
 export async function incrementCart(slug) {
   await pool.query(`
     INSERT INTO store_analytics_daily (page_id, date, carts)
-    SELECT sp.id, CURRENT_DATE, 1
+    SELECT sp.id, (NOW() AT TIME ZONE '${ART}')::date, 1
     FROM seller_pages sp
     WHERE sp.slug = $1 AND sp.active = true
     ON CONFLICT (page_id, date)
@@ -33,15 +35,15 @@ async function _analyticsQuery(pageId, sellerId, from, to) {
 
   const { rows: orderRows } = await pool.query(`
     SELECT
-      DATE(wo.created_at)::text AS date,
+      (wo.created_at AT TIME ZONE '${ART}')::date::text AS date,
       COUNT(*)::int              AS count,
       COALESCE(SUM(wo.total), 0)::numeric AS revenue
     FROM web_orders wo
     WHERE wo.seller_id = $1
-      AND DATE(wo.created_at) BETWEEN $2 AND $3
+      AND (wo.created_at AT TIME ZONE '${ART}')::date BETWEEN $2 AND $3
       AND wo.color IN ('paid', 'pending')
-    GROUP BY DATE(wo.created_at)
-    ORDER BY DATE(wo.created_at)
+    GROUP BY (wo.created_at AT TIME ZONE '${ART}')::date
+    ORDER BY (wo.created_at AT TIME ZONE '${ART}')::date
   `, [sellerId, from, to]);
 
   const totalVisits  = visitRows.reduce((s, r) => s + Number(r.count), 0);

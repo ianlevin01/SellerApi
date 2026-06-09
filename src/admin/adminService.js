@@ -11,6 +11,10 @@ export async function getDashboard() {
   return { stats, recentOrders, recentSellers };
 }
 
+export async function getMetrics() {
+  return repo.getMetrics();
+}
+
 export async function getSellers() {
   return repo.getAllSellers();
 }

@@ -14,6 +14,9 @@ const h = fn => async (req, res) => {
 // Dashboard
 router.get("/dashboard/stats", h(() => svc.getDashboard()));
 
+// Metrics
+router.get("/metrics", h(() => svc.getMetrics()));
+
 // Sellers
 router.get("/sellers",             h(() => svc.getSellers()));
 router.get("/sellers/:id",         h(req => svc.getSellerDetail(req.params.id)));

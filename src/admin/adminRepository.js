@@ -38,6 +38,70 @@ export async function getRecentSellers(limit = 10) {
   return rows;
 }
 
+export async function getMetrics() {
+  const ART = "America/Argentina/Buenos_Aires";
+
+  const { rows: [summary] } = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM sellers)::int                                              AS total_sellers,
+      (SELECT COUNT(DISTINCT seller_id) FROM seller_pages)::int                        AS sellers_with_store,
+      (SELECT COUNT(DISTINCT sp.seller_id)
+       FROM seller_pages sp
+       WHERE EXISTS (SELECT 1 FROM seller_products spr WHERE spr.page_id = sp.id))::int AS sellers_with_products,
+      (SELECT COUNT(DISTINCT seller_id) FROM web_orders WHERE color = 'paid')::int     AS sellers_with_sales,
+
+      (SELECT COUNT(*) FROM sellers WHERE cvu_verified = true)::int                    AS cvu_verified,
+      (SELECT COUNT(*) FROM sellers WHERE cvu IS NOT NULL AND cvu_verified = false)::int AS cvu_pending,
+      (SELECT COUNT(*) FROM sellers WHERE cvu IS NULL)::int                            AS cvu_none,
+
+      (SELECT COUNT(*) FROM sellers WHERE plan_status = 'trial')::int                  AS plan_trial,
+      (SELECT COUNT(*) FROM sellers WHERE plan_status = 'active')::int                 AS plan_active,
+      (SELECT COUNT(*) FROM sellers
+       WHERE plan_status = 'expired' OR (plan_status IS NULL AND trial_ends_at < NOW()))::int AS plan_expired,
+
+      (SELECT COUNT(*) FROM sellers WHERE last_active_at >= NOW() - INTERVAL '1 day')::int  AS active_1d,
+      (SELECT COUNT(*) FROM sellers WHERE last_active_at >= NOW() - INTERVAL '3 days')::int AS active_3d,
+      (SELECT COUNT(*) FROM sellers WHERE last_active_at >= NOW() - INTERVAL '7 days')::int AS active_7d,
+      (SELECT COUNT(*) FROM sellers WHERE last_active_at >= NOW() - INTERVAL '14 days')::int AS active_14d,
+      (SELECT COUNT(*) FROM sellers WHERE last_active_at >= NOW() - INTERVAL '30 days')::int AS active_30d,
+
+      (SELECT COUNT(*) FROM sellers WHERE created_at >= NOW() - INTERVAL '7 days')::int  AS new_7d,
+      (SELECT COUNT(*) FROM sellers WHERE created_at >= NOW() - INTERVAL '30 days')::int AS new_30d,
+
+      (SELECT COUNT(*) FROM web_orders WHERE color = 'paid')::int                          AS total_orders_paid,
+      (SELECT COALESCE(SUM(total),0) FROM web_orders WHERE color = 'paid')::numeric        AS total_revenue,
+      (SELECT COUNT(*) FROM web_orders WHERE color = 'paid'
+       AND created_at >= NOW() - INTERVAL '30 days')::int                                  AS orders_30d,
+      (SELECT COALESCE(SUM(total),0) FROM web_orders WHERE color = 'paid'
+       AND created_at >= NOW() - INTERVAL '30 days')::numeric                              AS revenue_30d,
+
+      (SELECT COUNT(*) FROM seller_pages WHERE active = true)::int                         AS active_stores
+  `);
+
+  const { rows: dailySignups } = await pool.query(`
+    SELECT
+      (created_at AT TIME ZONE $1)::date::text AS date,
+      COUNT(*)::int AS count
+    FROM sellers
+    WHERE created_at >= NOW() - INTERVAL '45 days'
+    GROUP BY (created_at AT TIME ZONE $1)::date
+    ORDER BY 1
+  `, [ART]);
+
+  const { rows: dailyOrders } = await pool.query(`
+    SELECT
+      (created_at AT TIME ZONE $1)::date::text AS date,
+      COUNT(*)::int AS count,
+      COALESCE(SUM(total), 0)::numeric AS revenue
+    FROM web_orders
+    WHERE color = 'paid' AND created_at >= NOW() - INTERVAL '45 days'
+    GROUP BY (created_at AT TIME ZONE $1)::date
+    ORDER BY 1
+  `, [ART]);
+
+  return { summary, daily_signups: dailySignups, daily_orders: dailyOrders };
+}
+
 // ── Sellers ──────────────────────────────────────────────────
 
 export async function getAllSellers() {
