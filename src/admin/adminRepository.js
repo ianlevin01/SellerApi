@@ -99,7 +99,39 @@ export async function getMetrics() {
     ORDER BY 1
   `, [ART]);
 
-  return { summary, daily_signups: dailySignups, daily_orders: dailyOrders };
+  const { rows: topStoresAllTime } = await pool.query(`
+    SELECT
+      sp.store_name, sp.slug, s.name AS seller_name,
+      SUM(sad.visits)::int AS total_visits
+    FROM store_analytics_daily sad
+    JOIN seller_pages sp ON sp.id = sad.page_id
+    JOIN sellers s ON s.id = sp.seller_id
+    GROUP BY sp.id, sp.store_name, sp.slug, s.name
+    ORDER BY total_visits DESC
+    LIMIT 10
+  `);
+
+  const { rows: topStoresToday } = await pool.query(`
+    SELECT
+      sp.store_name, sp.slug, s.name AS seller_name,
+      COALESCE(sad.visits, 0)::int AS visits_today
+    FROM seller_pages sp
+    JOIN sellers s ON s.id = sp.seller_id
+    LEFT JOIN store_analytics_daily sad
+      ON sad.page_id = sp.id
+      AND sad.date = (NOW() AT TIME ZONE $1)::date
+    WHERE sp.active = true AND COALESCE(sad.visits, 0) > 0
+    ORDER BY visits_today DESC
+    LIMIT 10
+  `, [ART]);
+
+  return {
+    summary,
+    daily_signups:       dailySignups,
+    daily_orders:        dailyOrders,
+    top_stores_all_time: topStoresAllTime,
+    top_stores_today:    topStoresToday,
+  };
 }
 
 // ── Sellers ──────────────────────────────────────────────────
