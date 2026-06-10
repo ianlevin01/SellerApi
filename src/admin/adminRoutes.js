@@ -27,6 +27,7 @@ router.patch("/sellers/:id/cvu/reject", h(req => svc.verifyCvu(req.params.id, fa
 
 // Orders
 router.patch("/orders/:id/pack", h(req => svc.packOrder(req.params.id)));
+router.patch("/orders/:id/ship", h(req => svc.shipOrderDirect(req.params.id, req.body.tracking_code || null)));
 router.get("/orders", h(req => svc.getOrders({
   sellerId: req.query.seller_id || null,
   status:   req.query.status   || null,

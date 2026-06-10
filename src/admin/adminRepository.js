@@ -358,6 +358,38 @@ export async function getPackagedOrdersWithShipping() {
   return rows;
 }
 
+export async function markOrderShippedDirect(orderId, trackingCode) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `UPDATE web_orders SET color = 'shipped'
+       WHERE id = $1 AND color IN ('paid', 'packaged')
+       RETURNING id, numero, customer_name, customer_email`,
+      [orderId]
+    );
+    if (rows[0] && trackingCode) {
+      const upd = await client.query(
+        `UPDATE order_shipping SET tracking_code = $1 WHERE web_order_id = $2`,
+        [trackingCode, orderId]
+      );
+      if (upd.rowCount === 0) {
+        await client.query(
+          `INSERT INTO order_shipping (web_order_id, shipping_type, tracking_code) VALUES ($1, 'other', $2)`,
+          [orderId, trackingCode]
+        );
+      }
+    }
+    await client.query("COMMIT");
+    return rows[0] || null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function markOrderShipped(orderId, trackingNumber) {
   const client = await pool.connect();
   try {

@@ -1,6 +1,6 @@
 import * as repo from "./adminRepository.js";
 import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
-import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged } from "../email/buyerEmails.js";
+import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged, sendOrderShipped } from "../email/buyerEmails.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -60,6 +60,18 @@ export async function packOrder(orderId) {
   if (!order) throw { status: 404, message: "Pedido no encontrado o no está en estado pagado" };
   sendOrderPackaged(order).catch(() => {});
   return { message: "Pedido marcado como empaquetado" };
+}
+
+export async function shipOrderDirect(orderId, trackingCode) {
+  const order = await repo.markOrderShippedDirect(orderId, trackingCode || null);
+  if (!order) throw { status: 404, message: "Pedido no encontrado o ya fue enviado" };
+  sendOrderShipped({
+    customerEmail:  order.customer_email,
+    customerName:   order.customer_name,
+    orderNumero:    order.numero,
+    trackingNumber: trackingCode || null,
+  }).catch(() => {});
+  return { message: "Pedido marcado como enviado" };
 }
 
 export async function getEarnings(status) {

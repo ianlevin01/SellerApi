@@ -624,6 +624,7 @@ export async function sendOrderShipped({ customerEmail, customerName, orderNumer
         y ya está en camino hacia vos.
       </p>
 
+      ${trackingNumber ? `
       <!-- Tracking number destacado -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
         <tr>
@@ -653,6 +654,14 @@ export async function sendOrderShipped({ customerEmail, customerName, orderNumer
           3. Seguí el recorrido de tu pedido en tiempo real
         </p>
       </div>
+      ` : `
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px;margin-bottom:8px">
+        <p style="margin:0;font-size:13px;color:#374151;font-weight:600">📦 Tu pedido está en camino</p>
+        <p style="margin:8px 0 0;font-size:13px;color:#6b7280;line-height:1.6">
+          Próximamente recibirás el código de seguimiento para rastrear tu envío.
+        </p>
+      </div>
+      `}
     `);
 
     await transporter.sendMail({
