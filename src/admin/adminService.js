@@ -1,6 +1,6 @@
 import * as repo from "./adminRepository.js";
 import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
-import { notifySellerCvuVerified, notifySellerPayoutTransferred } from "../email/buyerEmails.js";
+import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged } from "../email/buyerEmails.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -53,6 +53,13 @@ export async function verifyCvu(id, verified) {
 
 export async function getOrders(filters) {
   return repo.getAllOrders(filters);
+}
+
+export async function packOrder(orderId) {
+  const order = await repo.markOrderPackaged(orderId);
+  if (!order) throw { status: 404, message: "Pedido no encontrado o no está en estado pagado" };
+  sendOrderPackaged(order).catch(() => {});
+  return { message: "Pedido marcado como empaquetado" };
 }
 
 export async function getEarnings(status) {

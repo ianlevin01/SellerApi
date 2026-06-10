@@ -152,11 +152,13 @@ export async function getOrders(sellerId) {
        wo.color, wo.created_at, wo.order_id,
        COALESCE(
          (SELECT json_agg(json_build_object(
-           'name',       woi.name,
-           'quantity',   woi.quantity,
-           'unit_price', woi.unit_price,
-           'unit_cost',  woi.unit_cost,
-           'product_id', woi.product_id
+           'name',                woi.name,
+           'quantity',            woi.quantity,
+           'unit_price',          woi.unit_price,
+           'unit_cost',           woi.unit_cost,
+           'product_id',          woi.product_id,
+           'selected_color_name', woi.selected_color_name,
+           'selected_color_hex',  woi.selected_color_hex
          )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
          '[]'
        ) AS items,
@@ -213,7 +215,9 @@ export async function getPublicProducts(pageId, sellerId) {
        spc.custom_desc,
        COALESCE(spc.free_shipping, false) AS free_shipping,
        spc.promo_price,
-       COALESCE(spc.promo_enabled, false) AS promo_enabled
+       COALESCE(spc.promo_enabled, false) AS promo_enabled,
+       COALESCE(spc.colors_enabled, false) AS colors_enabled,
+       COALESCE(spc.colors, '[]'::jsonb) AS colors
      FROM seller_products spc
      JOIN products p ON p.id = spc.product_id
      LEFT JOIN categories c ON c.id = p.category_id

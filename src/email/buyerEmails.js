@@ -561,6 +561,113 @@ export async function notifySellerCvuVerified({ sellerEmail, sellerName, cvu, al
   }
 }
 
+// ── Email: pedido empaquetado → comprador ─────────────────────────────────────
+
+export async function sendOrderPackaged(order) {
+  if (!order?.customer_email) return;
+  try {
+    const name  = order.customer_name?.split(" ")[0] || "ahí";
+    const items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">📦</span>
+        <span style="font-size:14px;font-weight:600;color:#92400e">¡Tu pedido está siendo preparado!</span>
+      </div>
+
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola, ${name} 👋</h2>
+      <p style="margin:0 0 6px;font-size:15px;color:#374151">
+        Estamos empaquetando tu pedido <strong style="color:${BRAND}">#${order.numero}</strong>.
+        En las próximas horas estará listo para ser despachado.
+      </p>
+
+      ${items.length > 0 ? itemsTable(items) : ""}
+      ${totalBlock(Number(order.total), Number(order.shipping_amount || 0))}
+
+      <div style="margin-top:24px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 18px">
+        <p style="margin:0;font-size:13px;color:#15803d;font-weight:600">¿Qué sigue?</p>
+        <p style="margin:6px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
+          Una vez despachado, te enviaremos otro email con el <strong>código de seguimiento</strong>
+          para que puedas rastrear tu pedido en tiempo real.
+        </p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      order.customer_email,
+      subject: `📦 Tu pedido #${order.numero} está siendo preparado — Ventaz`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendOrderPackaged error:", err.message);
+  }
+}
+
+// ── Email: pedido enviado con tracking → comprador ────────────────────────────
+
+export async function sendOrderShipped({ customerEmail, customerName, orderNumero, trackingNumber }) {
+  if (!customerEmail) return;
+  try {
+    const name        = customerName?.split(" ")[0] || "ahí";
+    const trackingUrl = `https://www.correoargentino.com.ar/formularios/e-commerce?id=${encodeURIComponent(trackingNumber)}`;
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🚚</span>
+        <span style="font-size:14px;font-weight:600;color:#15803d">¡Tu pedido fue enviado!</span>
+      </div>
+
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">¡Está en camino, ${name}!</h2>
+      <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">
+        Tu pedido <strong style="color:${BRAND}">#${orderNumero}</strong> fue despachado por Correo Argentino
+        y ya está en camino hacia vos.
+      </p>
+
+      <!-- Tracking number destacado -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
+        <tr>
+          <td style="background:linear-gradient(135deg,${BRAND} 0%,${BRAND_D} 100%);border-radius:14px;padding:24px 28px;text-align:center">
+            <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.12em">Código de seguimiento</p>
+            <p style="margin:0;font-size:22px;font-weight:900;color:#fff;letter-spacing:2px;font-family:monospace">${trackingNumber}</p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- CTA rastrear -->
+      <div style="text-align:center;margin-bottom:24px">
+        <a href="${trackingUrl}"
+           style="display:inline-block;background:${BRAND};color:#fff;font-weight:700;font-size:15px;padding:14px 32px;border-radius:10px;text-decoration:none;letter-spacing:.01em">
+          🔍 Rastrear mi envío →
+        </a>
+        <p style="margin:10px 0 0;font-size:11px;color:#9ca3af">
+          correoargentino.com.ar · Podés rastrear en cualquier momento
+        </p>
+      </div>
+
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px">
+        <p style="margin:0;font-size:13px;color:#374151;font-weight:600">📍 ¿Cómo rastrear?</p>
+        <p style="margin:8px 0 0;font-size:13px;color:#6b7280;line-height:1.6">
+          1. Hacé clic en "Rastrear mi envío" o visitá el sitio de Correo Argentino<br/>
+          2. Ingresá el código de seguimiento si se lo pide<br/>
+          3. Seguí el recorrido de tu pedido en tiempo real
+        </p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      customerEmail,
+      subject: `🚚 ¡Tu pedido #${orderNumero} fue enviado! Código: ${trackingNumber}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendOrderShipped error:", err.message);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 export async function notifySellerPayoutTransferred(sellerEmail, sellerName, amount, cvu) {
   const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
   const first     = sellerName?.split(" ")[0] || "ahí";

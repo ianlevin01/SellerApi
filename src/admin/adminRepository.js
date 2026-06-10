@@ -176,7 +176,7 @@ export async function getSellerPages(sellerId) {
 export async function getSellerOrders(sellerId) {
   const { rows } = await pool.query(`
     SELECT wo.id, wo.numero, wo.customer_name, wo.total, wo.color, wo.created_at,
-           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price))
+           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price,'selected_color_name',woi.selected_color_name,'selected_color_hex',woi.selected_color_hex))
              FROM web_order_items woi WHERE woi.web_order_id = wo.id),'[]') AS items
     FROM web_orders wo
     WHERE wo.seller_id = $1
@@ -226,7 +226,7 @@ export async function getAllOrders({ sellerId, status, from, to, limit = 100, of
            wo.customer_city, wo.observaciones,
            wo.total, wo.shipping_amount, wo.color, wo.created_at, wo.mp_payment_id,
            s.name AS seller_name, s.email AS seller_email,
-           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price))
+           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price,'selected_color_name',woi.selected_color_name,'selected_color_hex',woi.selected_color_hex))
              FROM web_order_items woi WHERE woi.web_order_id = wo.id),'[]') AS items,
            (SELECT row_to_json(os) FROM order_shipping os WHERE os.web_order_id = wo.id LIMIT 1) AS shipping
     FROM web_orders wo
@@ -324,6 +324,64 @@ export async function getSalesReport({ from, to, sellerId } = {}) {
     ORDER BY revenue DESC`, params);
 
   return { summary, by_seller: bySeller };
+}
+
+// ── Order status transitions ─────────────────────────────────
+
+export async function markOrderPackaged(orderId) {
+  const { rows } = await pool.query(`
+    WITH updated AS (
+      UPDATE web_orders SET color = 'packaged'
+      WHERE id = $1 AND color = 'paid'
+      RETURNING id, numero, customer_name, customer_email, total, shipping_amount
+    )
+    SELECT u.*,
+      COALESCE(
+        (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity, 'unit_price', woi.unit_price))
+         FROM web_order_items woi WHERE woi.web_order_id = u.id),
+        '[]'
+      ) AS items
+    FROM updated u
+  `, [orderId]);
+  return rows[0] || null;
+}
+
+export async function getPackagedOrdersWithShipping() {
+  const { rows } = await pool.query(`
+    SELECT wo.id, wo.numero, wo.customer_name, wo.customer_email,
+           wo.total, wo.shipping_amount, os.shipping_type
+    FROM web_orders wo
+    JOIN order_shipping os ON os.web_order_id = wo.id
+    WHERE wo.color = 'packaged'
+      AND os.shipping_type IN ('home', 'branch')
+  `);
+  return rows;
+}
+
+export async function markOrderShipped(orderId, trackingNumber) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `UPDATE web_orders SET color = 'shipped'
+       WHERE id = $1 AND color = 'packaged'
+       RETURNING id, numero, customer_name, customer_email`,
+      [orderId]
+    );
+    if (rows[0] && trackingNumber) {
+      await client.query(
+        `UPDATE order_shipping SET tracking_code = $1 WHERE web_order_id = $2`,
+        [trackingNumber, orderId]
+      );
+    }
+    await client.query("COMMIT");
+    return rows[0] || null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Catalog ──────────────────────────────────────────────────

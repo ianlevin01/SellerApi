@@ -463,6 +463,8 @@ export async function setProductPrice(pageId, sellerId, productId, customPrice) 
   return { message: "Precio actualizado", precio_1: precio1 };
 }
 
+const FREE_SHIPPING_MIN_MARGIN = 15000;
+
 export async function setProductPromo(pageId, sellerId, productId, promoPrice, promoEnabled) {
   const page = await storeRepository.getPageById(pageId, sellerId);
   if (!page) throw { status: 404, message: "Página no encontrada" };
@@ -485,6 +487,15 @@ export async function setProductPromo(pageId, sellerId, productId, promoPrice, p
     const salePrice = sellerProduct?.custom_price;
     if (salePrice && Number(promoPrice) >= Number(salePrice) - 0.01)
       throw { status: 400, message: "El precio promo debe ser menor al precio de venta" };
+
+    if (sellerProduct?.free_shipping && precio1 > 0) {
+      const minRequired = Math.ceil(precio1 + FREE_SHIPPING_MIN_MARGIN);
+      if (Number(promoPrice) < minRequired)
+        throw {
+          status: 400,
+          message: `El precio promocional es insuficiente para mantener el envío gratis. El precio mínimo es $${minRequired.toLocaleString("es-AR")}.`,
+        };
+    }
   }
 
   await storeRepository.updateProductPromo(pageId, productId, promoEnabled ? Number(promoPrice) : null, Boolean(promoEnabled));

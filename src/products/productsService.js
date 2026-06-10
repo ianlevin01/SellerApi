@@ -1,6 +1,6 @@
 // src/modules/products/productsService.js
 import * as productsRepository from "./productsRepository.js";
-import { getCotizacion, getPageById } from "../store/storeRepository.js";
+import { getCotizacion, getPageById, getCostUsdForProduct, getSellerProduct } from "../store/storeRepository.js";
 import { signKeys } from "../utils/s3Client.js";
 import { calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
@@ -63,8 +63,38 @@ export async function removeProduct(pageId, productId) {
   return { message: "Producto quitado de la tienda" };
 }
 
+const FREE_SHIPPING_MIN_MARGIN = 15000;
+
 export async function customizeProduct(pageId, sellerId, productId, data) {
   if (!productId) throw { status: 400, message: "productId requerido" };
+
+  if (data.free_shipping === true) {
+    const [cotizacion, costUsd, sellerProduct, { plan_id }] = await Promise.all([
+      getCotizacion(),
+      getCostUsdForProduct(productId),
+      getSellerProduct(pageId, productId),
+      getSellerPlan(sellerId),
+    ]);
+
+    if (costUsd > 0) {
+      const precio1     = calcShownCost(costUsd, cotizacion, 30, plan_id);
+      const minRequired = Math.ceil(precio1 + FREE_SHIPPING_MIN_MARGIN);
+
+      const promoActiva   = sellerProduct?.promo_enabled && Number(sellerProduct?.promo_price) > 0;
+      const effectivePrice = promoActiva
+        ? Number(sellerProduct.promo_price)
+        : Number(sellerProduct?.custom_price || 0);
+
+      if (effectivePrice < minRequired) {
+        const label = promoActiva ? "El precio promocional" : "El precio";
+        throw {
+          status: 400,
+          message: `${label} es insuficiente para activar envío gratis. El precio mínimo es $${minRequired.toLocaleString("es-AR")}.`,
+        };
+      }
+    }
+  }
+
   await productsRepository.customizeProduct(pageId, sellerId, productId, data);
   return { message: "Producto actualizado" };
 }

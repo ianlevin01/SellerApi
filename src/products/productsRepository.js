@@ -33,6 +33,10 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS promo_price,
       COALESCE((SELECT sp.promo_enabled FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS promo_enabled,
+      COALESCE((SELECT sp.colors_enabled FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS colors_enabled,
+      COALESCE((SELECT sp.colors FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), '[]'::jsonb) AS colors,
       COALESCE(
         (SELECT json_agg(pi.key ORDER BY pi.created_at)
          FROM product_images pi WHERE pi.product_id = p.id), '[]'
@@ -161,6 +165,10 @@ export async function findById(pageId, sellerId, productId) {
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1) AS promo_price,
       COALESCE((SELECT sp.promo_enabled FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS promo_enabled,
+      COALESCE((SELECT sp.colors_enabled FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), false) AS colors_enabled,
+      COALESCE((SELECT sp.colors FROM seller_products sp
+       WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id LIMIT 1), '[]'::jsonb) AS colors,
       COALESCE(
         (SELECT json_agg(pi.key ORDER BY pi.created_at)
          FROM product_images pi WHERE pi.product_id = p.id), '[]'
@@ -179,15 +187,19 @@ export async function findById(pageId, sellerId, productId) {
   return rows[0] || null;
 }
 
-export async function customizeProduct(pageId, sellerId, productId, { custom_name, custom_desc, free_shipping }) {
+export async function customizeProduct(pageId, sellerId, productId, { custom_name, custom_desc, free_shipping, colors_enabled, colors }) {
   await pool.query(
     `UPDATE seller_products
-     SET custom_name  = $1,
-         custom_desc  = $2,
-         free_shipping = COALESCE($6, free_shipping)
+     SET custom_name    = $1,
+         custom_desc    = $2,
+         free_shipping  = COALESCE($6, free_shipping),
+         colors_enabled = COALESCE($7, colors_enabled),
+         colors         = COALESCE($8, colors)
      WHERE page_id = $3 AND seller_id = $4 AND product_id = $5`,
     [custom_name ?? null, custom_desc ?? null, pageId, sellerId, productId,
-     free_shipping != null ? Boolean(free_shipping) : null]
+     free_shipping  != null ? Boolean(free_shipping) : null,
+     colors_enabled != null ? Boolean(colors_enabled) : null,
+     colors         !== undefined ? JSON.stringify(colors) : null]
   );
 }
 

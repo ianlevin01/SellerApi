@@ -131,6 +131,28 @@ function cpToProvinceCode(cp) {
 
 export { cpToProvinceCode };
 
+// Returns { trackingNumber, events } or null on failure
+export async function getTracking(orderId) {
+  if (!isConfigured()) return null;
+  try {
+    const token = await getToken();
+    const url   = `${BASE}/shipping/tracking?shippingId=${encodeURIComponent(String(orderId))}`;
+    const resp  = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) {
+      console.warn("[MiCorreo] getTracking non-OK:", resp.status);
+      return null;
+    }
+    const data = await resp.json();
+    return {
+      trackingNumber: data.trackingNumber || null,
+      events:         Array.isArray(data.events) ? data.events : [],
+    };
+  } catch (err) {
+    console.error("[MiCorreo] getTracking error:", err.message);
+    return null;
+  }
+}
+
 const PROVINCE_CODES = {
   "Buenos Aires":                      "B",
   "Ciudad Autónoma de Buenos Aires":   "C",
