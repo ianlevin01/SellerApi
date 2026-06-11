@@ -3,6 +3,7 @@ import * as storeService      from "./storeService.js";
 import * as productsService   from "../products/productsService.js";
 import { buildPageWithAI }    from "./aiPageBuilderService.js";
 import * as analyticsRepo     from "./analyticsRepository.js";
+import { getAbandonedCartsForPage } from "../purchase/abandonedCartService.js";
 
 function handleError(res, err) {
   if (err.status) return res.status(err.status).json({ message: err.message });
@@ -242,5 +243,13 @@ export async function getPageAnalytics(req, res) {
     const to   = req.query.to   || toART(now);
     const data = await analyticsRepo.getAnalytics(pageId, sellerId, from, to);
     return res.json(data);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getAbandonedCarts(req, res) {
+  try {
+    const { pageId } = req.params;
+    const carts = await getAbandonedCartsForPage(pageId);
+    return res.json(carts);
   } catch (err) { handleError(res, err); }
 }

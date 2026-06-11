@@ -677,6 +677,88 @@ export async function sendOrderShipped({ customerEmail, customerName, orderNumer
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+// ── Email: recuperación de carrito abandonado → comprador ─────────────────────
+
+export async function sendAbandonedCartRecovery({ customerEmail, customerName, items, total, storeUrl, storeName }) {
+  if (!customerEmail) return;
+  try {
+    const firstName = customerName?.split(" ")[0] || "ahí";
+    const storeLink = storeUrl || "#";
+    const itemRows  = (items || []).map(i => `
+      <tr>
+        <td style="padding:10px 12px;font-size:14px;color:#374151;border-bottom:1px solid #f3f4f6">${i.name}</td>
+        <td style="padding:10px 12px;font-size:14px;color:#374151;border-bottom:1px solid #f3f4f6;text-align:center;white-space:nowrap">× ${i.quantity}</td>
+        <td style="padding:10px 12px;font-size:14px;color:#111827;font-weight:600;border-bottom:1px solid #f3f4f6;text-align:right;white-space:nowrap">${fmt(i.unit_price ?? i.price ?? 0)}</td>
+      </tr>`).join("");
+
+    const html = baseLayout(`
+      <!-- Ícono llamada a la atención -->
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;background:#fef3c7;border-radius:50%;border:2px solid #fde68a">
+          <span style="font-size:36px;line-height:1">🛒</span>
+        </div>
+      </div>
+
+      <h2 style="margin:0 0 10px;font-size:22px;font-weight:800;color:#111827;text-align:center">
+        ¡Hola, ${firstName}! Dejaste algo en tu carrito
+      </h2>
+      <p style="margin:0 0 28px;font-size:15px;color:#6b7280;text-align:center;line-height:1.6">
+        Notamos que estuviste eligiendo en <strong style="color:#111827">${storeName || "la tienda"}</strong> pero no completaste tu compra.<br/>
+        ¡Todavía están disponibles para vos!
+      </p>
+
+      <!-- Tabla de productos -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <thead>
+          <tr style="background:#f9fafb">
+            <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:left;text-transform:uppercase;letter-spacing:.5px">Producto</th>
+            <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:center;text-transform:uppercase;letter-spacing:.5px">Cant.</th>
+            <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:.5px">Precio</th>
+          </tr>
+        </thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+
+      <!-- Total -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px">
+        <tr>
+          <td style="padding:6px 0;font-size:16px;font-weight:700;color:#111827">Total</td>
+          <td style="padding:6px 0;font-size:18px;font-weight:800;color:${BRAND};text-align:right">${fmt(total)}</td>
+        </tr>
+      </table>
+
+      <!-- CTA principal -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
+        <tr>
+          <td align="center">
+            <a href="${storeLink}"
+               style="display:inline-block;background:linear-gradient(135deg,${BRAND} 0%,${BRAND_D} 100%);color:#fff;font-weight:800;font-size:16px;padding:16px 40px;border-radius:12px;text-decoration:none;letter-spacing:.01em;box-shadow:0 4px 14px rgba(77,184,26,.35)">
+              Retomar mi compra →
+            </a>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Mensaje de urgencia suave -->
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px;text-align:center">
+        <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6">
+          Los productos están disponibles pero pueden agotarse.<br/>
+          ¿Tenés alguna duda? Contactá al vendedor directamente desde la tienda.
+        </p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      customerEmail,
+      subject: `🛒 ${firstName}, todavía tenés productos en tu carrito — ${storeName || "tu tienda"}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendAbandonedCartRecovery error:", err.message);
+  }
+}
+
 export async function notifySellerPayoutTransferred(sellerEmail, sellerName, amount, cvu) {
   const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
   const first     = sellerName?.split(" ")[0] || "ahí";

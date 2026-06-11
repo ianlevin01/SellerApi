@@ -8,6 +8,7 @@ import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
 import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending, notifyVentazNewSale } from "../email/buyerEmails.js";
 import { crearPresupuesto } from "./gestionmayoristaService.js";
+import { markAbandonedCartPaid } from "./abandonedCartService.js";
 
 const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -327,6 +328,9 @@ export async function confirmPayment(paymentId) {
     await repo.updateOrderStatus(payment.external_reference, newStatus, String(payment.id));
 
     if (newStatus === "paid") {
+      repo.getOrderBasic(payment.external_reference)
+        .then(order => { if (order) markAbandonedCartPaid(order.seller_id, order.customer_email); })
+        .catch(err => console.error("[abandonedCart] markPaid error:", err.message));
       payoutsService.createEarningForOrder(payment.external_reference)
         .catch(err => console.error("[payouts] createEarning error:", err.message));
       sendPaymentConfirmed(payment.external_reference);
@@ -386,6 +390,9 @@ export async function handleWebhook(query, body) {
   await repo.updateOrderStatus(orderId, newStatus, String(payment.id));
 
   if (newStatus === "paid") {
+    repo.getOrderBasic(orderId)
+      .then(order => { if (order) markAbandonedCartPaid(order.seller_id, order.customer_email); })
+      .catch(err => console.error("[abandonedCart] markPaid webhook error:", err.message));
     payoutsService.createEarningForOrder(orderId)
       .catch(err => console.error("[payouts] createEarning error:", err.message));
     sendPaymentConfirmed(orderId);

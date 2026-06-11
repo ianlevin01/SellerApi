@@ -158,6 +158,14 @@ export async function updateOrderStatus(orderId, status, mpPaymentId) {
   );
 }
 
+export async function getOrderBasic(orderId) {
+  const { rows } = await pool.query(
+    `SELECT seller_id, customer_email FROM web_orders WHERE id = $1`,
+    [orderId]
+  );
+  return rows[0] ?? null;
+}
+
 export async function getOrderItems(orderId) {
   const { rows } = await pool.query(
     `SELECT product_id, quantity, unit_price

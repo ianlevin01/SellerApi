@@ -45,7 +45,8 @@ router.get ("/orders",                         requireSeller, storeController.ge
 router.get ("/my-tier",                        requireSeller, storeController.getMyTierInfo);
 
 // ── Analytics ─────────────────────────────────────────────────
-router.get ("/pages/:pageId/analytics",     requireSeller, storeController.getPageAnalytics);
+router.get ("/pages/:pageId/analytics",        requireSeller, storeController.getPageAnalytics);
+router.get ("/pages/:pageId/abandoned-carts",  requireSeller, storeController.getAbandonedCarts);
 
 // ── Públicas (tienda visible para compradores) ────────────────
 router.post("/public/:slug/track/visit",           storeController.trackVisit);

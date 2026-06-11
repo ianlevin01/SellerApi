@@ -3,6 +3,8 @@ import { Router }  from "express";
 import crypto       from "crypto";
 import requireSeller from "../middleware/requireSeller.js";
 import * as checkoutService from "./purchaseService.js";
+import * as abandonedCartService from "./abandonedCartService.js";
+import * as purchaseRepo from "./purchaseRepository.js";
 import { handleWebhook as handleSubscriptionWebhook, handlePaymentWebhook } from "../subscriptions/subscriptionService.js";
 
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET; // clave secreta del panel de MP
@@ -48,6 +50,31 @@ router.post("/public/:slug/checkout", async (req, res) => {
   } catch (err) {
     console.error("[checkout] error:", err?.message, err?.cause ?? err);
     if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// Guardar carrito abandonado — llamado desde SellerPage al completar paso 2
+router.post("/public/:slug/abandoned-cart", async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const { customer, items, total } = req.body;
+    if (!customer?.email || !items?.length) return res.status(400).json({ message: "Datos incompletos" });
+
+    const page = await purchaseRepo.getPageBySlug(slug);
+    if (!page) return res.status(404).json({ message: "Tienda no encontrada" });
+
+    await abandonedCartService.saveAbandonedCart({
+      sellerId: page.seller_id,
+      pageId:   page.id,
+      slug,
+      customer,
+      items,
+      total: total || 0,
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[abandoned-cart] error:", err.message);
     return res.status(500).json({ message: "Error interno" });
   }
 });

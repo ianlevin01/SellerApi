@@ -19,9 +19,10 @@ import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerCh
 import onboardingRoutes    from "./onboarding/onboardingRoutes.js";
 import subscriptionRoutes from "./subscriptions/subscriptionRoutes.js";
 import academyRoutes      from "./academy/academyRoutes.js";
-import { startStockListener }    from "./stock/stockListener.js";
-import { startCampaignScheduler } from "./email/campaignService.js";
-import { startShippingTracker }   from "./jobs/shippingTracker.js";
+import { startStockListener }       from "./stock/stockListener.js";
+import { startCampaignScheduler }   from "./email/campaignService.js";
+import { startShippingTracker }     from "./jobs/shippingTracker.js";
+import { startAbandonedCartTracker } from "./jobs/abandonedCartTracker.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -98,6 +99,7 @@ app.listen(PORT, () => console.log(`Seller API corriendo en :${PORT}`));
 startStockListener();
 startCampaignScheduler();
 startShippingTracker();
+startAbandonedCartTracker();
 
 // Evita que la API crashee por promesas rechazadas sin capturar
 process.on("unhandledRejection", (reason) => {
