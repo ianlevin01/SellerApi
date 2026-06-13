@@ -22,7 +22,7 @@ export async function getProducts(req, res) {
     const result = await productsService.getProducts(null, req.seller.id, {
       search,
       categoryId: category_id,
-      onlyMine:   false,
+      onlyMine:   only_mine === "true",
       limit:      limit  ? Number(limit)  : 200,
       offset:     offset ? Number(offset) : 0,
     });
