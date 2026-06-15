@@ -168,6 +168,45 @@ export async function adminDeleteSection(sectionId) {
   await pool.query(`DELETE FROM academy_sections WHERE id = $1`, [sectionId]);
 }
 
+export async function adminGetCourseUsers(courseId, type) {
+  if (type === "viewed") {
+    const { rows } = await pool.query(`
+      SELECT s.id, s.name, s.email, v.viewed_at AS event_at
+      FROM academy_views v
+      JOIN sellers s ON s.id = v.seller_id
+      WHERE v.course_id = $1
+      ORDER BY v.viewed_at DESC
+    `, [courseId]);
+    return rows;
+  }
+  if (type === "started") {
+    const { rows } = await pool.query(`
+      SELECT s.id, s.name, s.email, MIN(ap.completed_at) AS event_at
+      FROM academy_progress ap
+      JOIN academy_sections sec ON sec.id = ap.section_id
+      JOIN sellers s ON s.id = ap.seller_id
+      WHERE sec.course_id = $1
+      GROUP BY s.id, s.name, s.email
+      ORDER BY event_at DESC
+    `, [courseId]);
+    return rows;
+  }
+  if (type === "completed") {
+    const { rows } = await pool.query(`
+      SELECT s.id, s.name, s.email, MAX(ap.completed_at) AS event_at
+      FROM academy_progress ap
+      JOIN academy_sections sec ON sec.id = ap.section_id
+      JOIN sellers s ON s.id = ap.seller_id
+      WHERE sec.course_id = $1
+      GROUP BY s.id, s.name, s.email
+      HAVING COUNT(DISTINCT ap.section_id) = (SELECT COUNT(*) FROM academy_sections WHERE course_id = $1)
+      ORDER BY event_at DESC
+    `, [courseId]);
+    return rows;
+  }
+  return [];
+}
+
 export async function adminGetAllMetrics() {
   const { rows } = await pool.query(`
     SELECT

@@ -123,3 +123,12 @@ export async function adminGetAllMetrics(req, res) {
   try { return res.json(await repo.adminGetAllMetrics()); }
   catch (err) { handleError(res, err); }
 }
+
+export async function adminGetCourseUsers(req, res) {
+  try {
+    const { type } = req.query;
+    if (!["viewed", "started", "completed"].includes(type))
+      return res.status(400).json({ message: "type debe ser viewed, started o completed" });
+    return res.json(await repo.adminGetCourseUsers(req.params.courseId, type));
+  } catch (err) { handleError(res, err); }
+}
