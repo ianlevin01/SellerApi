@@ -86,12 +86,17 @@ router.post("/mailing/send-test", async (req, res) => {
 });
 
 router.post("/mailing/send-mass", async (req, res) => {
-  try {
-    const result = await sendMassMail(req.body);
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 500).json({ message: err.message || "Error al enviar" });
-  }
+  // Validar antes de lanzar el job
+  if (!req.body?.html) return res.status(400).json({ message: "html es requerido" });
+
+  // Responder de inmediato — el envío sigue en segundo plano
+  res.json({ ok: true, message: "Envío iniciado. Los mails se están despachando en segundo plano." });
+
+  sendMassMail(req.body).then(r => {
+    console.log(`[mailing] Envío masivo finalizado: ${r.sent} enviados, ${r.failed} fallidos de ${r.total}`);
+  }).catch(err => {
+    console.error("[mailing] Error en envío masivo:", err.message);
+  });
 });
 
 export default router;

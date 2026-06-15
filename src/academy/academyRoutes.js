@@ -14,6 +14,7 @@ router.post  ("/progress/:sectionId",        requireSeller, ctrl.markComplete);
 router.delete("/progress/:sectionId",        requireSeller, ctrl.markIncomplete);
 
 // ── Rutas admin ───────────────────────────────────────────────
+router.get   ("/admin/metrics",              requireAdminJWT, ctrl.adminGetAllMetrics);
 router.post  ("/admin/thumbnail",            requireAdminJWT, upload5mb.single("image"), ctrl.adminUploadThumbnail);
 router.get   ("/admin/courses",              requireAdminJWT, ctrl.adminGetCourses);
 router.get   ("/admin/courses/:courseId",    requireAdminJWT, ctrl.adminGetCourse);

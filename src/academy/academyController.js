@@ -21,6 +21,7 @@ export async function getCourse(req, res) {
     const { plan_id } = await getSellerPlan(req.seller.id);
     const course = await repo.getCourseById(req.params.courseId, req.seller.id, plan_id);
     if (!course) return res.status(404).json({ message: "Curso no encontrado" });
+    if (!course.locked) repo.recordView(req.seller.id, req.params.courseId).catch(() => {});
     return res.json(course);
   } catch (err) { handleError(res, err); }
 }
@@ -116,4 +117,9 @@ export async function adminDeleteSection(req, res) {
     await repo.adminDeleteSection(req.params.sectionId);
     return res.status(204).end();
   } catch (err) { handleError(res, err); }
+}
+
+export async function adminGetAllMetrics(req, res) {
+  try { return res.json(await repo.adminGetAllMetrics()); }
+  catch (err) { handleError(res, err); }
 }

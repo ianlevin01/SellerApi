@@ -81,6 +81,13 @@ export async function markIncomplete(sellerId, sectionId) {
   );
 }
 
+export async function recordView(sellerId, courseId) {
+  await pool.query(
+    `INSERT INTO academy_views (seller_id, course_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [sellerId, courseId]
+  );
+}
+
 // ── Admin ─────────────────────────────────────────────────────
 
 export async function adminGetCourses() {
@@ -159,4 +166,31 @@ export async function adminUpdateSection(sectionId, { title, content_md, video_u
 
 export async function adminDeleteSection(sectionId) {
   await pool.query(`DELETE FROM academy_sections WHERE id = $1`, [sectionId]);
+}
+
+export async function adminGetAllMetrics() {
+  const { rows } = await pool.query(`
+    SELECT
+      c.id::text AS course_id,
+      (SELECT COUNT(*) FROM academy_views v WHERE v.course_id = c.id)::int            AS views,
+      (SELECT COUNT(DISTINCT ap.seller_id)
+       FROM academy_progress ap
+       JOIN academy_sections s ON s.id = ap.section_id
+       WHERE s.course_id = c.id)::int                                                  AS started,
+      (SELECT COUNT(*) FROM (
+         SELECT ap.seller_id
+         FROM academy_progress ap
+         JOIN academy_sections s ON s.id = ap.section_id
+         WHERE s.course_id = c.id
+         GROUP BY ap.seller_id
+         HAVING COUNT(DISTINCT ap.section_id) =
+           (SELECT COUNT(*) FROM academy_sections WHERE course_id = c.id)
+       ) sub)::int                                                                      AS completed
+    FROM academy_courses c
+  `);
+  return Object.fromEntries(rows.map(r => [r.course_id, {
+    views:     r.views,
+    started:   r.started,
+    completed: r.completed,
+  }]));
 }
