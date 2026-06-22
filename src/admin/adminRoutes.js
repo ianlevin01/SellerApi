@@ -1,6 +1,8 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 import requireAdminJWT from "../middleware/requireAdminJWT.js";
 import * as svc from "./adminService.js";
+import * as repo from "./adminRepository.js";
 import { generateMailHtml, sendTestMail, sendMassMail } from "./mailingService.js";
 
 const router = Router();
@@ -25,6 +27,22 @@ router.patch("/sellers/:id/unblock", h(req => svc.blockSeller(req.params.id, fal
 router.patch("/sellers/:id/cvu/verify", h(req => svc.verifyCvu(req.params.id, true)));
 router.patch("/sellers/:id/cvu/reject", h(req => svc.verifyCvu(req.params.id, false)));
 
+router.post("/sellers/:id/impersonate", async (req, res) => {
+  try {
+    const seller = await repo.getSellerBasic(req.params.id);
+    if (!seller) return res.status(404).json({ message: "Seller no encontrado" });
+    const token = jwt.sign(
+      { id: seller.id, email: seller.email, name: seller.name, slug: seller.slug },
+      process.env.JWT_SECRET_SELLER,
+      { expiresIn: "2h" }
+    );
+    res.json({ token, seller });
+  } catch (err) {
+    console.error("[impersonate]", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // Orders
 router.patch("/orders/:id/pack", h(req => svc.packOrder(req.params.id)));
 router.patch("/orders/:id/ship", h(req => svc.shipOrderDirect(req.params.id, req.body.tracking_code || null)));
@@ -38,8 +56,7 @@ router.get("/orders", h(req => svc.getOrders({
 })));
 
 // Earnings
-router.get("/earnings",              h(req => svc.getEarnings(req.query.status)));
-router.patch("/earnings/:id/approve", h(req => svc.approveEarning(req.params.id)));
+router.get("/earnings", h(req => svc.getEarnings(req.query.status)));
 
 // Payouts
 router.get("/payouts",                    h(req => svc.getPayouts(req.query.status)));

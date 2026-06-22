@@ -24,12 +24,12 @@ export async function updateSellerCvu(sellerId, { cvu, cvuAlias, cvuHolderName, 
 
 // ── Ganancias ─────────────────────────────────────────────────
 
-export async function createEarning(sellerId, webOrderId, amount) {
+export async function createEarning(sellerId, webOrderId, amount, availableAt) {
   await pool.query(
-    `INSERT INTO seller_earnings (seller_id, web_order_id, amount)
-     VALUES ($1, $2, $3)
+    `INSERT INTO seller_earnings (seller_id, web_order_id, amount, status, available_at)
+     VALUES ($1, $2, $3, 'available', $4)
      ON CONFLICT (web_order_id) DO NOTHING`,
-    [sellerId, webOrderId, amount]
+    [sellerId, webOrderId, amount, availableAt]
   );
 }
 
@@ -49,7 +49,7 @@ export async function getEarnings(sellerId, status) {
 export async function getBalanceSummary(sellerId) {
   const { rows } = await pool.query(
     `SELECT
-       COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN amount END), 0) AS pending_total,
+       COALESCE(SUM(CASE WHEN status = 'available' AND available_at > NOW() THEN amount END), 0) AS pending_total,
        COALESCE(SUM(CASE WHEN status = 'available'
                           AND (available_at IS NULL OR available_at <= NOW())
                     THEN amount END), 0) AS available_total
@@ -58,17 +58,6 @@ export async function getBalanceSummary(sellerId) {
     [sellerId]
   );
   return rows[0];
-}
-
-export async function approveOrderEarning(webOrderId, availableAt) {
-  const { rowCount } = await pool.query(
-    `UPDATE seller_earnings
-     SET status       = 'available',
-         available_at = $2
-     WHERE web_order_id = $1 AND status = 'pending_approval'`,
-    [webOrderId, availableAt || new Date()]
-  );
-  return rowCount > 0;
 }
 
 export async function getAvailableEarnings(sellerId) {

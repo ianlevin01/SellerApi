@@ -37,15 +37,6 @@ router.post("/request", requireSeller, async (req, res) => {
 
 // ── Admin ─────────────────────────────────────────────────────
 
-router.patch("/orders/:webOrderId/approve", requireAdminJWT, async (req, res) => {
-  try {
-    await service.approveOrderEarning(req.params.webOrderId);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.status || 500).json({ message: err.message });
-  }
-});
-
 router.patch("/transfers/:payoutId/transferred", requireAdminJWT, async (req, res) => {
   try {
     await service.markPayoutTransferred(req.params.payoutId);

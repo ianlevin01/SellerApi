@@ -78,12 +78,6 @@ export async function getEarnings(status) {
   return repo.getAllEarnings(status || null);
 }
 
-export async function approveEarning(id) {
-  const earning = await repo.approveEarning(id);
-  if (!earning) throw { status: 404, message: "Ganancia no encontrada o ya aprobada" };
-  return earning;
-}
-
 export async function getPayouts(status) {
   return repo.getAllPayouts(status || null);
 }

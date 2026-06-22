@@ -327,8 +327,8 @@ async function toolGetMyCombos(ctx) {
 async function toolGetSellerStats(ctx) {
   const { rows } = await pool.query(`
     SELECT
-      COALESCE(SUM(CASE WHEN status = 'available' THEN amount END), 0) AS balance_disponible,
-      COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN amount END), 0) AS balance_pendiente
+      COALESCE(SUM(CASE WHEN status = 'available' AND (available_at IS NULL OR available_at <= NOW()) THEN amount END), 0) AS balance_disponible,
+      COALESCE(SUM(CASE WHEN status = 'available' AND available_at > NOW() THEN amount END), 0) AS balance_pendiente
     FROM seller_earnings
     WHERE seller_id = $1
   `, [ctx.sellerId]);

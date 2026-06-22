@@ -14,7 +14,7 @@ export async function getDashboardStats() {
       (SELECT COUNT(*) FROM web_orders WHERE created_at >= now() - interval '1 day')        AS orders_today,
       (SELECT COUNT(*) FROM web_orders)                                                      AS orders_total,
       (SELECT COALESCE(SUM(total),0) FROM web_orders WHERE color = 'paid')                  AS revenue_total,
-      (SELECT COUNT(*) FROM seller_earnings WHERE status = 'pending_approval')              AS earnings_pending,
+      (SELECT COUNT(*) FROM seller_earnings WHERE status = 'available' AND available_at > NOW()) AS earnings_pending,
       (SELECT COUNT(*) FROM seller_payouts WHERE status = 'en_proceso')                     AS payouts_pending
   `);
   return rows[0];
@@ -144,8 +144,8 @@ export async function getAllSellers() {
       s.cvu, s.cvu_alias, s.cvu_holder_name, s.cvu_verified,
       COUNT(DISTINCT sp.id)  FILTER (WHERE sp.active = true) AS pages_active,
       COUNT(DISTINCT wo.id)                                  AS orders_total,
-      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'available'), 0) AS balance_available,
-      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'pending_approval'), 0) AS balance_pending,
+      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'available' AND (se.available_at IS NULL OR se.available_at <= NOW())), 0) AS balance_available,
+      COALESCE(SUM(se.amount) FILTER (WHERE se.status = 'available' AND se.available_at > NOW()), 0) AS balance_pending,
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT sp.store_name), NULL) AS store_names
     FROM sellers s
     LEFT JOIN seller_pages sp ON sp.seller_id = s.id
@@ -237,27 +237,33 @@ export async function getAllOrders({ sellerId, status, from, to, limit = 100, of
   return rows;
 }
 
+export async function getSellerBasic(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT s.id, s.email, s.name, sp.slug
+     FROM sellers s
+     LEFT JOIN seller_pages sp ON sp.seller_id = s.id
+     WHERE s.id = $1
+     LIMIT 1`,
+    [sellerId]
+  );
+  return rows[0] || null;
+}
+
 // ── Earnings ─────────────────────────────────────────────────
 
 export async function getAllEarnings(status) {
   const where = status ? `WHERE se.status = $1` : "";
   const params = status ? [status] : [];
   const { rows } = await pool.query(`
-    SELECT se.id, se.amount, se.status, se.created_at,
+    SELECT se.id, se.amount, se.status, se.created_at, se.available_at,
            s.name AS seller_name, s.email AS seller_email,
            wo.numero AS order_numero, wo.total AS order_total, wo.created_at AS order_date
     FROM seller_earnings se
     JOIN sellers s ON s.id = se.seller_id
     JOIN web_orders wo ON wo.id = se.web_order_id
     ${where}
-    ORDER BY se.created_at DESC`, params);
+    ORDER BY se.available_at ASC NULLS LAST, se.created_at DESC`, params);
   return rows;
-}
-
-export async function approveEarning(id) {
-  const { rows } = await pool.query(
-    `UPDATE seller_earnings SET status = 'available' WHERE id = $1 AND status = 'pending_approval' RETURNING *`, [id]);
-  return rows[0];
 }
 
 // ── Payouts ──────────────────────────────────────────────────
