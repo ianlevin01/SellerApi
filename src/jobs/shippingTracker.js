@@ -1,6 +1,6 @@
 import { getPackagedOrdersWithShipping, markOrderShipped } from "../admin/adminRepository.js";
 import { getTracking } from "../shipping/shippingService.js";
-import { sendOrderShipped } from "../email/buyerEmails.js";
+import { sendOrderShipped, sendOrderShippedToSeller } from "../email/buyerEmails.js";
 
 const INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
 
@@ -35,7 +35,10 @@ async function checkPackagedOrders() {
         customerName:   order.customer_name,
         orderNumero:    order.numero,
         trackingNumber: tracking.trackingNumber,
-      }).catch(err => console.error(`[shippingTracker] Email error order ${order.numero}:`, err.message));
+      }).catch(err => console.error(`[shippingTracker] Email comprador error order ${order.numero}:`, err.message));
+
+      sendOrderShippedToSeller(order.id, tracking.trackingNumber)
+        .catch(err => console.error(`[shippingTracker] Email vendedor error order ${order.numero}:`, err.message));
 
       console.log(`[shippingTracker] Pedido #${order.numero} marcado como enviado — tracking: ${tracking.trackingNumber}`);
     } catch (err) {

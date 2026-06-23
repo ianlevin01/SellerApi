@@ -604,6 +604,122 @@ export async function sendOrderPackaged(order) {
   }
 }
 
+// ── Email: pedido empaquetado → vendedor ─────────────────────────────────────
+
+export async function sendOrderPackagedToSeller(orderId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo.numero, wo.customer_name, wo.seller_id
+       FROM web_orders wo WHERE wo.id = $1`,
+      [orderId]
+    );
+    const order = rows[0];
+    if (!order?.seller_id) return;
+
+    const { rows: sellerRows } = await pool.query(
+      `SELECT email, name FROM sellers WHERE id = $1`,
+      [order.seller_id]
+    );
+    const seller = sellerRows[0];
+    if (!seller?.email) return;
+
+    const first = seller.name?.split(" ")[0] || "";
+    const html  = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">📦</span>
+        <span style="font-size:14px;font-weight:600;color:#92400e">Pedido empaquetado</span>
+      </div>
+
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${first ? `, ${first}` : ""}!</h2>
+      <p style="margin:0 0 6px;font-size:15px;color:#374151">
+        El pedido <strong style="color:${BRAND}">#${order.numero}</strong> de <strong>${order.customer_name}</strong>
+        fue marcado como empaquetado y está siendo preparado para el despacho.
+      </p>
+      <p style="margin:16px 0 0;font-size:13px;color:#6b7280">
+        En cuanto sea despachado por Correo Argentino, te avisamos con el código de seguimiento.
+        Podés ver el detalle en <a href="https://ventaz.com.ar/orders" style="color:${BRAND};text-decoration:none">tu panel de pedidos</a>.
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      seller.email,
+      subject: `📦 Pedido #${order.numero} empaquetado — en preparación para envío`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendOrderPackagedToSeller error:", err.message);
+  }
+}
+
+// ── Email: pedido enviado con tracking → vendedor ─────────────────────────────
+
+export async function sendOrderShippedToSeller(orderId, trackingNumber) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo.numero, wo.customer_name, wo.seller_id
+       FROM web_orders wo WHERE wo.id = $1`,
+      [orderId]
+    );
+    const order = rows[0];
+    if (!order?.seller_id) return;
+
+    const { rows: sellerRows } = await pool.query(
+      `SELECT email, name FROM sellers WHERE id = $1`,
+      [order.seller_id]
+    );
+    const seller = sellerRows[0];
+    if (!seller?.email) return;
+
+    const first       = seller.name?.split(" ")[0] || "";
+    const trackingUrl = trackingNumber
+      ? `https://www.correoargentino.com.ar/formularios/e-commerce?id=${encodeURIComponent(trackingNumber)}`
+      : null;
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🚚</span>
+        <span style="font-size:14px;font-weight:600;color:#15803d">Pedido despachado</span>
+      </div>
+
+      <h2 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Hola${first ? `, ${first}` : ""}!</h2>
+      <p style="margin:0 0 24px;font-size:15px;color:#374151">
+        El pedido <strong style="color:${BRAND}">#${order.numero}</strong> de <strong>${order.customer_name}</strong>
+        fue despachado por Correo Argentino. Tu cliente ya recibió el mail con el código de seguimiento.
+      </p>
+
+      ${trackingNumber ? `
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
+        <tr>
+          <td style="background:linear-gradient(135deg,${BRAND} 0%,${BRAND_D} 100%);border-radius:14px;padding:20px 28px;text-align:center">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.1em">Código de seguimiento</p>
+            <p style="margin:0;font-size:20px;font-weight:900;color:#fff;letter-spacing:2px;font-family:monospace">${trackingNumber}</p>
+          </td>
+        </tr>
+      </table>
+      ${trackingUrl ? `
+      <div style="text-align:center;margin-bottom:16px">
+        <a href="${trackingUrl}" style="display:inline-block;background:${BRAND};color:#fff;font-weight:700;font-size:14px;padding:12px 28px;border-radius:10px;text-decoration:none">
+          Rastrear envío →
+        </a>
+      </div>` : ""}` : ""}
+
+      <p style="margin:0;font-size:13px;color:#6b7280;text-align:center">
+        Podés ver todos tus pedidos en <a href="https://ventaz.com.ar/orders" style="color:${BRAND};text-decoration:none">tu panel de Ventaz</a>.
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      seller.email,
+      subject: `🚚 Pedido #${order.numero} despachado${trackingNumber ? ` — Tracking: ${trackingNumber}` : ""}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendOrderShippedToSeller error:", err.message);
+  }
+}
+
 // ── Email: pedido enviado con tracking → comprador ────────────────────────────
 
 export async function sendOrderShipped({ customerEmail, customerName, orderNumero, trackingNumber }) {
