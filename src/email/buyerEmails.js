@@ -1,7 +1,7 @@
 import { transporter } from "../config/mailer.js";
 import pool from "../database/db.js";
 
-const FROM             = process.env.SMTP_FROM || "noreply@ventaz.online";
+const FROM             = process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar";
 const VENTAZ_INTERNAL  = "ventaz.oficial@gmail.com";
 const BRAND   = "#4db81a";
 const BRAND_D = "#3a9a15";
@@ -10,7 +10,7 @@ function fmt(n) {
   return `$${Number(n || 0).toLocaleString("es-AR", { maximumFractionDigits: 0 })}`;
 }
 
-function baseLayout(content) {
+export function baseLayout(content) {
   return `<!DOCTYPE html>
 <html lang="es">
 <head>

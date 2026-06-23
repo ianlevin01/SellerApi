@@ -2,8 +2,8 @@
 import nodemailer from "nodemailer";
 
 export const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === "true",
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  host:   process.env.SMTP_HOST_AWS,
+  port:   Number(process.env.SMTP_PORT_AWS) || 587,
+  secure: false, // STARTTLS en puerto 587
+  auth: { user: process.env.SMTP_USER_AWS, pass: process.env.SMTP_PASS_AWS },
 });

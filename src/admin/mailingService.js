@@ -39,7 +39,7 @@ REGLAS CRÍTICAS — COMPATIBILIDAD CON EMAIL:
 - Usá SIEMPRE estilos inline (style="...") — nunca CSS en <style> ni clases CSS
 - Usá tablas (<table><tr><td>) para el layout, no divs ni flexbox
 - NO uses: CSS variables (var(--x)), animaciones (@keyframes), ::before/::after, position:absolute, conic-gradient, radial-gradient, display:flex, display:grid
-- Los colores de Ventaz que tenés que mantener: fondo #07110d, verde #4bff9c, texto blanco #ffffff, texto suave #cfe5d8
+- Los colores de Ventaz que tenés que mantener: fondo #050505, verde #7CFF4A, texto blanco #ffffff, texto suave #CFCFCF, highlight blanco #F1F1F1
 - Tipografía: font-family: Arial, Helvetica, sans-serif
 - Ancho máximo del contenedor: 640px centrado con margin:0 auto
 - Para botones: tabla de 1 celda con background-color en el <td> y el <a> con display:inline-block
@@ -100,7 +100,7 @@ export async function generateMailHtml(messages = [], currentHtml) {
   return { html: restoreBase64(result.html, blobs), message: result.message };
 }
 
-const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`;
+const FROM = () => `Ventaz <${process.env.EMAIL_FROM || process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar"}>`;
 
 const TEXT_FALLBACK = "Este mensaje fue enviado desde Ventaz. Si estás viendo este texto, tu cliente de mail no soporta HTML.";
 

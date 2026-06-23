@@ -8,7 +8,7 @@ import { firebaseAuth } from "../config/firebase.js";
 import { transporter } from "../config/mailer.js";
 import { signKey } from "../utils/s3Client.js";
 import { uploadStoreAsset } from "../images/imagesService.js";
-import { notifyVentazNewSeller } from "../email/buyerEmails.js";
+import { notifyVentazNewSeller, baseLayout } from "../email/buyerEmails.js";
 
 const twilioClient = process.env.TWILIO_ACCOUNT_SID
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -20,19 +20,32 @@ const BASE_URL   = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 
 
 async function sendVerificationEmail(email, token) {
-  const link = `${BASE_URL}/verify-email?token=${token}`;
-  await transporter.sendMail({
-    from:    process.env.SMTP_FROM || "noreply@tudominio.com",
-    to:      email,
-    subject: "Verificá tu cuenta de vendedor",
-    html: `
-      <h2>Bienvenido al portal de vendedores</h2>
-      <p>Hacé clic en el siguiente link para verificar tu cuenta:</p>
-      <a href="${link}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
-        Verificar cuenta
+  const link  = `${BASE_URL}/verify-email?token=${token}`;
+  const BRAND = "#4db81a";
+  const BRAND_D = "#3a9a15";
+  const html = baseLayout(`
+    <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:${BRAND};letter-spacing:.03em;text-transform:uppercase">Portal de vendedores</p>
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#111827">Verificá tu cuenta</h2>
+    <p style="margin:0 0 28px;font-size:15px;color:#4b5563;line-height:1.6">
+      ¡Bienvenido a Ventaz! Para activar tu cuenta y empezar a crear tu tienda,
+      confirmá tu dirección de email haciendo clic en el botón de abajo.
+    </p>
+    <div style="text-align:center;margin:0 0 28px">
+      <a href="${link}"
+         style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,${BRAND} 0%,${BRAND_D} 100%);color:#fff;border-radius:10px;text-decoration:none;font-size:15px;font-weight:700;letter-spacing:.02em">
+        Verificar mi cuenta
       </a>
-      <p style="color:#666;font-size:12px;margin-top:16px">Este link expira en 24 horas.</p>
-    `,
+    </div>
+    <p style="margin:0;font-size:13px;color:#9ca3af;text-align:center">
+      Este link expira en <strong style="color:#6b7280">24 horas</strong>.
+      Si no creaste esta cuenta podés ignorar este mensaje.
+    </p>
+  `);
+  await transporter.sendMail({
+    from:    process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar",
+    to:      email,
+    subject: "Verificá tu cuenta — Ventaz",
+    html,
   });
 }
 
@@ -230,7 +243,7 @@ export async function forgotPassword(email) {
 
   const link = `${BASE_URL}/reset-password?token=${resetToken}`;
   await transporter.sendMail({
-    from:    process.env.SMTP_FROM || "noreply@ventaz.com.ar",
+    from:    process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar",
     to:      normalized,
     subject: "Restablecer contraseña — Ventaz",
     html: `
