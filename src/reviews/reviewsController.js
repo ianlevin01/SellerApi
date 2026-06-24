@@ -50,8 +50,11 @@ export async function remove(req, res) {
   } catch (e) { err(res, e); }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function publicList(req, res) {
   try {
+    if (!UUID_RE.test(req.params.productId)) return res.json([]);
     const { rows } = await pool.query(
       "SELECT id FROM seller_pages WHERE slug = $1 AND active = true",
       [req.params.slug]
