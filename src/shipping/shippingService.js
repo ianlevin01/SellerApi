@@ -18,7 +18,10 @@ async function getToken() {
 
   const resp = await fetch(`${BASE}/token`, {
     method:  "POST",
-    headers: { Authorization: `Basic ${creds}` },
+    headers: {
+      Authorization:  `Basic ${creds}`,
+      "Content-Type": "application/json",
+    },
   });
 
   if (!resp.ok) throw new Error(`MiCorreo auth failed: ${resp.status}`);
@@ -137,9 +140,16 @@ export async function getTracking(orderId) {
   try {
     const token = await getToken();
     const url   = `${BASE}/shipping/tracking?shippingId=${encodeURIComponent(String(orderId))}`;
-    const resp  = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const resp  = await fetch(url, {
+      headers: {
+        Authorization:  `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept:         "application/json",
+      },
+    });
     if (!resp.ok) {
-      console.warn("[MiCorreo] getTracking non-OK:", resp.status);
+      const body = await resp.text().catch(() => "");
+      console.warn("[MiCorreo] getTracking non-OK:", resp.status, body);
       return null;
     }
     const data = await resp.json();
