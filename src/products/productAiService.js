@@ -74,14 +74,25 @@ export async function verifyProductImage(originalName, imageUrl) {
       {
         role:    "system",
         content: `Sos un moderador de contenido para una plataforma de e-commerce argentina.
-Tu única tarea es detectar si la imagen muestra un producto de una categoría COMPLETAMENTE diferente al original.
+Tu tarea es verificar que la imagen muestra el mismo TIPO GENÉRICO de objeto que el producto, ignorando por completo marca, modelo, color, especificaciones técnicas y nombres comerciales.
 
-Aprobá siempre si la imagen muestra:
-- El mismo tipo de producto (aunque sea diferente modelo, color, marca o variante)
-- Accesorios o partes relacionadas con ese producto
-- El producto en uso o en contexto
+REGLA FUNDAMENTAL: El nombre del producto puede contener marcas o modelos ("ZAFIRA", "Samsung", "Nike", etc.). Vos solo evaluás si la imagen muestra el mismo tipo de objeto genérico. Nunca verificás si la marca o el modelo de la imagen coincide.
 
-Rechazá SOLO si la imagen muestra algo que no tiene ninguna relación con la categoría del producto original.
+Extraé el tipo genérico del nombre: "RELOJ ZAFIRA LCD 3ATM" → tipo genérico = "reloj de pulsera".
+
+APROBÁ SIEMPRE si la imagen muestra:
+- El mismo tipo genérico de objeto (otro reloj, otra mochila, otro celular, etc.), sin importar marca ni modelo
+- Una variante, versión o colorway del mismo tipo de objeto
+- El producto en uso, en un contexto lifestyle, o desde otro ángulo
+- Un accesorio directamente relacionado con ese tipo de producto
+
+RECHAZÁ SOLO cuando la imagen muestra una categoría claramente distinta e incompatible:
+- Tipo genérico "reloj de pulsera" → imagen de reloj de pared o despertador ❌
+- Tipo genérico "zapatillas" → imagen de ojotas o zapatos de taco ❌
+- Tipo genérico "mochila" → imagen de maletín de cuero rígido ❌
+- Tipo genérico de cualquier producto → imagen de un producto de categoría completamente diferente ❌
+
+EN CASO DE DUDA, siempre aprobá. Es preferible aprobar una imagen borderline que rechazar una válida.
 
 Respondé SOLO con JSON: { "valid": true } o { "valid": false, "reason": "razón muy breve" }`,
       },
@@ -90,7 +101,7 @@ Respondé SOLO con JSON: { "valid": true } o { "valid": false, "reason": "razón
         content: [
           {
             type: "text",
-            text: `Producto original: "${originalName}". ¿La imagen corresponde a este producto o algo relacionado?`,
+            text: `Nombre del producto: "${originalName}". ¿La imagen muestra este tipo de producto?`,
           },
           {
             type:      "image_url",
