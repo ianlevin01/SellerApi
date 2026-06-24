@@ -12,6 +12,8 @@ export async function generateReviews(pageId, productId, sellerId) {
   const active = await intRepo.isActive(pageId, "star_ai");
   if (!active) throw { status: 403, message: "StarAI no está activado para esta tienda" };
 
+  let name, desc;
+
   const { rows } = await pool.query(
     `SELECT p.name, p.description, sp.custom_name, sp.custom_desc
      FROM products p
@@ -19,11 +21,20 @@ export async function generateReviews(pageId, productId, sellerId) {
      WHERE p.id = $1`,
     [productId, pageId]
   );
-  if (!rows.length) throw { status: 404, message: "Producto no encontrado" };
 
-  const p    = rows[0];
-  const name = p.custom_name || p.name;
-  const desc = (p.custom_desc || p.description || "").slice(0, 200);
+  if (rows.length) {
+    const p = rows[0];
+    name = p.custom_name || p.name;
+    desc = (p.custom_desc || p.description || "").slice(0, 200);
+  } else {
+    const { rows: comboRows } = await pool.query(
+      `SELECT name, description FROM page_combos WHERE id = $1 AND page_id = $2`,
+      [productId, pageId]
+    );
+    if (!comboRows.length) throw { status: 404, message: "Producto no encontrado" };
+    name = comboRows[0].name;
+    desc = (comboRows[0].description || "").slice(0, 200);
+  }
 
   const prompt = `Generá exactamente 5 reseñas de clientes reales en español argentino para el producto "${name}"${desc ? `. Descripción: ${desc}` : ""}. Cada reseña debe tener:
 - Un nombre argentino (nombre + apellido)
