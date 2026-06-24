@@ -134,12 +134,13 @@ function cpToProvinceCode(cp) {
 
 export { cpToProvinceCode };
 
-// Returns { trackingNumber, events } or null on failure
-export async function getTracking(orderId) {
+// Returns { trackingNumber, events } or null on failure.
+// trackingId can be the MiCorreo tracking code (from importShipment) or our orderId as fallback.
+export async function getTracking(trackingId) {
   if (!isConfigured()) return null;
   try {
     const token = await getToken();
-    const url   = `${BASE}/shipping/tracking?shippingId=${encodeURIComponent(String(orderId))}`;
+    const url   = `${BASE}/shipping/tracking?shippingId=${encodeURIComponent(String(trackingId))}`;
     const resp  = await fetch(url, {
       headers: {
         Authorization:  `Bearer ${token}`,

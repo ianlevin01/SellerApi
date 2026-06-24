@@ -195,6 +195,21 @@ export async function getSellerEarnings(sellerId) {
   return rows;
 }
 
+export async function getSellerStockReserves(sellerId) {
+  const { rows } = await pool.query(`
+    SELECT ssr.product_id, ssr.quantity, ssr.updated_at,
+           p.name AS product_name, p.code AS product_code,
+           COALESCE(
+             (SELECT json_agg(pi.key ORDER BY pi.created_at) FROM product_images pi WHERE pi.product_id = p.id),
+             '[]'
+           ) AS images
+    FROM seller_stock_reserves ssr
+    JOIN products p ON p.id = ssr.product_id
+    WHERE ssr.seller_id = $1 AND ssr.quantity > 0
+    ORDER BY ssr.updated_at DESC`, [sellerId]);
+  return rows;
+}
+
 export async function blockSeller(id, active) {
   const { rows } = await pool.query(
     `UPDATE sellers SET active = $1 WHERE id = $2 RETURNING id, name, email, active`, [active, id]);
@@ -355,7 +370,7 @@ export async function markOrderPackaged(orderId) {
 export async function getPackagedOrdersWithShipping() {
   const { rows } = await pool.query(`
     SELECT wo.id, wo.numero, wo.customer_name, wo.customer_email,
-           wo.total, wo.shipping_amount, os.shipping_type
+           wo.total, wo.shipping_amount, os.shipping_type, os.tracking_code
     FROM web_orders wo
     JOIN order_shipping os ON os.web_order_id = wo.id
     WHERE wo.color = 'packaged'
