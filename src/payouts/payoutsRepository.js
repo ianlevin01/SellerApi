@@ -145,14 +145,15 @@ export async function markPayoutTransferred(payoutId) {
 
 export async function getOrderForEarning(webOrderId) {
   const { rows } = await pool.query(
-    `SELECT wo.id, wo.seller_id, wo.total, wo.updated_at,
+    `SELECT wo.id, wo.seller_id, wo.total, wo.updated_at, wo.order_type,
             COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
             COALESCE(
               (SELECT json_agg(json_build_object(
-                'product_id', woi.product_id,
-                'quantity',   woi.quantity,
-                'unit_price', woi.unit_price,
-                'unit_cost',  woi.unit_cost
+                'product_id',        woi.product_id,
+                'quantity',          woi.quantity,
+                'unit_price',        woi.unit_price,
+                'unit_cost',         woi.unit_cost,
+                'seller_stock_used', woi.seller_stock_used
               )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
               '[]'
             ) AS items
@@ -172,7 +173,9 @@ export async function getCostUsdForProduct(productId) {
 }
 
 export async function getCotizacion() {
-  const { rows } = await pool.query(`SELECT cotizacion_dolar FROM price_config LIMIT 1`);
+  const { rows } = await pool.query(
+    `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1`
+  );
   return Number(rows[0]?.cotizacion_dolar || 1);
 }
 

@@ -2,6 +2,7 @@ import pkg from "pg";
 import { transporter } from "../config/mailer.js";
 import config from "../config/db-config.js";
 import pool from "../database/db.js";
+import { calcShownCost } from "../utils/pricing.js";
 
 const { Client } = pkg;
 
@@ -54,7 +55,7 @@ async function handleAlert(productId, availableStock) {
 
   const productName = rows[0].name;
   const productCode = rows[0].code || productId;
-  const precio1     = Number(rows[0].costo_usd) * Number(rows[0].cotizacion) * 1.56;
+  const precio1     = calcShownCost(rows[0].costo_usd, rows[0].cotizacion, 30);
   const isExpensive = precio1 > 100000;
 
   // For expensive products: only alert when stock_total = 0 (trigger fires at <10 but we skip)
@@ -76,7 +77,7 @@ async function handleAlert(productId, availableStock) {
   for (const seller of rows) {
     try {
       await transporter.sendMail({
-        from:    `"Ventaz" <${process.env.SMTP_USER}>`,
+        from:    `"Ventaz" <${process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar"}>`,
         to:      seller.email,
         subject: `Stock ${isExpensive ? "agotado" : "bajo"}: ${productName}`,
         html: `

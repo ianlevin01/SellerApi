@@ -4,7 +4,7 @@ import * as repo from "./consumerChatRepository.js";
 import { transporter } from "../config/mailer.js";
 
 const STORE_DOMAIN = process.env.STORE_PAGE_DOMAIN;
-const FROM_EMAIL   = process.env.SMTP_FROM || process.env.SMTP_USER;
+const FROM_EMAIL   = process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar";
 
 function chatUrl(slug, convId, token) {
   if (!slug || !STORE_DOMAIN) return null;

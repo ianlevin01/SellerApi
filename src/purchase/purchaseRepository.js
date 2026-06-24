@@ -77,7 +77,7 @@ export async function getSellerDiscountTiers(pageId) {
 
 // ─── Crear orden ─────────────────────────────────────────────────────────────
 
-export async function createWebOrder({ customer, items, total, seller_id, shipping_amount = 0, free_shipping_absorbed = 0 }) {
+export async function createWebOrder({ customer, items, total, seller_id, shipping_amount = 0, free_shipping_absorbed = 0, order_type = null }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -92,8 +92,8 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
     const { rows } = await client.query(
       `
       INSERT INTO web_orders
-        (numero, customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (numero, customer_name, customer_email, customer_phone, customer_city, observaciones, total, seller_id, shipping_amount, free_shipping_absorbed, order_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
       `,
       [
@@ -107,6 +107,7 @@ export async function createWebOrder({ customer, items, total, seller_id, shippi
         seller_id,
         shipping_amount,
         free_shipping_absorbed,
+        order_type,
       ]
     );
 
@@ -151,11 +152,22 @@ export async function getSellerTotalSales(sellerId) {
   return Number(rows[0]?.total || 0);
 }
 
+// Returns true if the row was actually updated (false = already in a later state, guard blocked it).
 export async function updateOrderStatus(orderId, status, mpPaymentId) {
-  await pool.query(
-    `UPDATE web_orders SET color = $1, mp_payment_id = $2 WHERE id = $3`,
+  // Guard: payment.updated webhooks arrive for already-fulfilled orders (packaged/shipped).
+  // Only allow MP status transitions on pre-fulfillment states; refunds always apply.
+  const { rowCount } = await pool.query(
+    `UPDATE web_orders
+     SET color         = $1,
+         mp_payment_id = COALESCE($2, mp_payment_id)
+     WHERE id = $3
+       AND (
+         $1 = 'refunded'
+         OR color IN ('pending', 'paid')
+       )`,
     [status, mpPaymentId, orderId]
   );
+  return rowCount > 0;
 }
 
 export async function getOrderBasic(orderId) {
@@ -174,4 +186,51 @@ export async function getOrderItems(orderId) {
     [orderId]
   );
   return rows;
+}
+
+export async function getOrderBasicWithType(orderId) {
+  const { rows } = await pool.query(
+    `SELECT id, seller_id, customer_email, order_type FROM web_orders WHERE id = $1`,
+    [orderId]
+  );
+  return rows[0] ?? null;
+}
+
+// Decrementa atómicamente min(reserva_disponible, wantedQty) unidades del stock propio del vendedor.
+// Devuelve cuántas unidades se descontaron (0 si no había reserva).
+export async function tryUseSellerStock(sellerId, productId, wantedQty) {
+  const { rows } = await pool.query(`
+    WITH deduction AS (
+      SELECT LEAST(quantity, $3::integer) AS to_use
+      FROM seller_stock_reserves
+      WHERE seller_id = $1 AND product_id = $2 AND quantity > 0
+    )
+    UPDATE seller_stock_reserves
+    SET quantity   = quantity - (SELECT to_use FROM deduction),
+        updated_at = NOW()
+    WHERE seller_id = $1 AND product_id = $2
+      AND EXISTS (SELECT 1 FROM deduction WHERE to_use > 0)
+    RETURNING (SELECT to_use FROM deduction) AS used_qty
+  `, [sellerId, productId, wantedQty]);
+  return Number(rows[0]?.used_qty || 0);
+}
+
+export async function markItemSellerStock(webOrderId, productId, usedQty) {
+  await pool.query(
+    `UPDATE web_order_items
+     SET seller_stock_used = $1
+     WHERE web_order_id = $2 AND product_id = $3`,
+    [usedQty, webOrderId, productId]
+  );
+}
+
+// Suma qty a la reserva del vendedor para ese producto (crea la fila si no existe).
+export async function upsertSellerStockReserve(sellerId, productId, qty) {
+  await pool.query(`
+    INSERT INTO seller_stock_reserves (seller_id, product_id, quantity)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (seller_id, product_id)
+    DO UPDATE SET quantity   = seller_stock_reserves.quantity + $3,
+                  updated_at = NOW()
+  `, [sellerId, productId, qty]);
 }

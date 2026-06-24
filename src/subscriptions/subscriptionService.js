@@ -10,7 +10,7 @@ async function notifyPlanAttempt(sellerId, planName) {
     const { rows } = await pool.query(`SELECT name, email FROM sellers WHERE id = $1`, [sellerId]);
     const s = rows[0] || {};
     await transporter.sendMail({
-      from:    process.env.EMAIL_FROM || process.env.SMTP_USER,
+      from:    process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar",
       to:      NOTIFY_EMAIL,
       subject: `🛒 Intento de compra de plan — ${s.name || s.email || sellerId}`,
       html: `
@@ -35,7 +35,7 @@ async function notifyPlanAttempt(sellerId, planName) {
 async function notifyPlanPayment(seller, planName, amount) {
   try {
     await transporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      from: process.env.SMTP_FROM_AWS || "noreply@ventaz.com.ar",
       to:   NOTIFY_EMAIL,
       subject: `💳 Nuevo pago de plan — ${seller.name || seller.email}`,
       html: `
@@ -363,6 +363,13 @@ export async function handleWebhook(type, dataId) {
   console.log(`[sub-webhook] actualizando seller="${seller.id}" → status="${newStatus}"`);
   await repo.updateSellerSubscription(seller.id, updates);
   console.log(`[sub-webhook] ✓ seller actualizado`);
+
+  if (newStatus === "active") {
+    const planId = updates.plan_id || seller.plan_id;
+    repo.getPlanById(planId)
+      .then(plan => notifyPlanPayment(seller, plan?.name || planId, plan?.price_ars || mpSub.auto_recurring?.transaction_amount))
+      .catch(() => {});
+  }
 }
 
 // ── Webhook de pagos individuales ───────────────────────────

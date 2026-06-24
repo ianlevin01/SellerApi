@@ -107,35 +107,39 @@ export async function calculateEarningForOrder(webOrderId) {
   const order = await repo.getOrderForEarning(webOrderId);
   if (!order) return 0;
 
-  // El tier depende del total de ESTE pedido (no del historial acumulado)
+  // Órdenes de tipo seller_request/stock_reserve no generan ganancia
+  if (order.order_type === "seller_request" || order.order_type === "stock_reserve") return 0;
+
   const platformPct = getSellerPlatformPct(Number(order.total));
-
-  // Cotización solo se necesita como fallback para órdenes antiguas sin unit_cost
   let cotizacion = null;
-
-  let ganancia = 0;
+  let ganancia   = 0;
 
   for (const item of order.items) {
     if (!item.product_id) continue;
 
-    let baseCost;
-    if (item.unit_cost != null) {
-      // Costo bloqueado al momento del checkout (tier 30% con la cotización de ese día)
-      baseCost = Number(item.unit_cost);
-    } else {
-      // Fallback para órdenes anteriores a la migración 018
-      if (cotizacion === null) cotizacion = await repo.getCotizacion();
-      const costUsd = await repo.getCostUsdForProduct(item.product_id);
-      baseCost = calcShownCost(costUsd, cotizacion, 30);
+    const sellerStockQty = Number(item.seller_stock_used || 0);
+    const normalQty      = item.quantity - sellerStockQty;
+
+    // Unidades de stock propio → ganancia = precio de venta completo (el vendedor ya pagó el costo)
+    if (sellerStockQty > 0) {
+      ganancia += Number(item.unit_price) * sellerStockQty;
     }
 
-    // Ajustar baseCost al tier real del pedido:
-    // baseCost = costo × cotizacion × 1.10 × 1.30
-    // adjustedCost = costo × cotizacion × 1.10 × (1 + platformPct/100)
-    //              = baseCost × (1 + platformPct/100) / 1.30
-    const adjustedCost = baseCost * (1 + platformPct / 100) / 1.30;
-    const diferencia   = Number(item.unit_price) - adjustedCost;
-    if (diferencia > 0) ganancia += diferencia * item.quantity;
+    // Unidades de stock normal → cálculo estándar de plataforma
+    if (normalQty > 0) {
+      let baseCost;
+      if (item.unit_cost != null) {
+        baseCost = Number(item.unit_cost);
+      } else {
+        if (cotizacion === null) cotizacion = await repo.getCotizacion();
+        const costUsd = await repo.getCostUsdForProduct(item.product_id);
+        baseCost = calcShownCost(costUsd, cotizacion, 30);
+      }
+      // adjustedCost = baseCost × (1 + platformPct/100) / 1.30
+      const adjustedCost = baseCost * (1 + platformPct / 100) / 1.30;
+      const diferencia   = Number(item.unit_price) - adjustedCost;
+      if (diferencia > 0) ganancia += diferencia * normalQty;
+    }
   }
 
   const freeShippingAbsorbed = Number(order.free_shipping_absorbed || 0);

@@ -6,7 +6,7 @@ const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]:
 // ── Cotización ────────────────────────────────────────────────
 
 export async function getCotizacion() {
-  const { rows } = await pool.query(`SELECT cotizacion_dolar FROM price_config LIMIT 1`);
+  const { rows } = await pool.query(`SELECT cotizacion_dolar FROM price_config WHERE negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1`);
   return Number(rows[0]?.cotizacion_dolar || 1);
 }
 
