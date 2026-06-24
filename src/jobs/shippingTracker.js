@@ -24,7 +24,10 @@ async function checkPackagedOrders() {
 
   for (const order of orders) {
     try {
-      const tracking = await getTracking(order.tracking_code || order.id);
+      const shippingId = order.tracking_code || order.id;
+      console.log(`[shippingTracker] Pedido #${order.numero} — tracking_code="${order.tracking_code}" → consultando con shippingId="${shippingId}"`);
+      const tracking = await getTracking(shippingId);
+      console.log(`[shippingTracker] Pedido #${order.numero} — respuesta:`, JSON.stringify(tracking));
       if (!isDispatched(tracking)) continue;
 
       const shipped = await markOrderShipped(order.id, tracking.trackingNumber);
