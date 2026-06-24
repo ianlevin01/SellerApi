@@ -349,22 +349,46 @@ export async function getSalesReport({ from, to, sellerId } = {}) {
 
 // ── Order status transitions ─────────────────────────────────
 
-export async function markOrderPackaged(orderId) {
-  const { rows } = await pool.query(`
-    WITH updated AS (
-      UPDATE web_orders SET color = 'packaged'
-      WHERE id = $1 AND color = 'paid'
-      RETURNING id, numero, customer_name, customer_email, total, shipping_amount
-    )
-    SELECT u.*,
-      COALESCE(
-        (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity, 'unit_price', woi.unit_price))
-         FROM web_order_items woi WHERE woi.web_order_id = u.id),
-        '[]'
-      ) AS items
-    FROM updated u
-  `, [orderId]);
-  return rows[0] || null;
+export async function markOrderPackaged(orderId, trackingCode) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`
+      WITH updated AS (
+        UPDATE web_orders SET color = 'packaged'
+        WHERE id = $1 AND color = 'paid'
+        RETURNING id, numero, customer_name, customer_email, total, shipping_amount
+      )
+      SELECT u.*,
+        COALESCE(
+          (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity, 'unit_price', woi.unit_price))
+           FROM web_order_items woi WHERE woi.web_order_id = u.id),
+          '[]'
+        ) AS items
+      FROM updated u
+    `, [orderId]);
+
+    if (rows[0] && trackingCode) {
+      const upd = await client.query(
+        `UPDATE order_shipping SET tracking_code = $1 WHERE web_order_id = $2`,
+        [trackingCode, orderId]
+      );
+      if (upd.rowCount === 0) {
+        await client.query(
+          `INSERT INTO order_shipping (web_order_id, shipping_type, tracking_code) VALUES ($1, 'home', $2)`,
+          [orderId, trackingCode]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    return rows[0] || null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getPackagedOrdersWithShipping() {

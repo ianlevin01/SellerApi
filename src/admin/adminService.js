@@ -22,12 +22,13 @@ export async function getSellers() {
 export async function getSellerDetail(id) {
   const seller = await repo.getSellerById(id);
   if (!seller) throw { status: 404, message: "Vendedor no encontrado" };
-  const [pages, orders, earnings] = await Promise.all([
+  const [pages, orders, earnings, stockReserves] = await Promise.all([
     repo.getSellerPages(id),
     repo.getSellerOrders(id),
     repo.getSellerEarnings(id),
+    repo.getSellerStockReserves(id),
   ]);
-  return { seller, pages, orders, earnings };
+  return { seller, pages, orders, earnings, stockReserves };
 }
 
 export async function blockSeller(id, block) {
@@ -55,8 +56,8 @@ export async function getOrders(filters) {
   return repo.getAllOrders(filters);
 }
 
-export async function packOrder(orderId) {
-  const order = await repo.markOrderPackaged(orderId);
+export async function packOrder(orderId, trackingCode) {
+  const order = await repo.markOrderPackaged(orderId, trackingCode || null);
   if (!order) throw { status: 404, message: "Pedido no encontrado o no está en estado pagado" };
   sendOrderPackaged(order).catch(() => {});
   sendOrderPackagedToSeller(order.id).catch(() => {});
