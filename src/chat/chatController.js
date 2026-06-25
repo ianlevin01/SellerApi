@@ -61,7 +61,10 @@ export async function getSellerMessages(req, res) {
 
 export async function sendSellerMessage(req, res) {
   try {
-    const result = await chatService.sendSellerMessage(req.seller.id, Number(req.params.conversationId), req.body.body);
+    const result = await chatService.sendSellerMessage(
+      req.seller.id, Number(req.params.conversationId),
+      req.body.body, req.body.image_url || null
+    );
     return res.status(201).json(result);
   } catch (err) { handleError(res, err); }
 }

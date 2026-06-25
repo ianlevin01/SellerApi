@@ -89,13 +89,13 @@ export async function getSellerMessages(sellerId, conversationId) {
   };
 }
 
-export async function sendSellerMessage(sellerId, conversationId, body) {
-  if (!body?.trim()) throw { status: 400, message: "El mensaje no puede estar vacío" };
+export async function sendSellerMessage(sellerId, conversationId, body, imageUrl) {
+  if (!body?.trim() && !imageUrl) throw { status: 400, message: "El mensaje no puede estar vacío" };
 
   const conversation = await chatRepository.getConversationById(conversationId, sellerId);
   if (!conversation) throw { status: 404, message: "Conversación no encontrada" };
 
-  const msg = await chatRepository.insertMessage(conversationId, "seller", body.trim());
+  const msg = await chatRepository.insertMessage(conversationId, "seller", body?.trim() || null, imageUrl || null);
 
   if (conversation.customer_email) {
     // Usar el slug guardado en la conversación para apuntar a la tienda correcta.

@@ -1,6 +1,7 @@
 // src/modules/chat/chatRepository.js
 import pool from "../database/db.js";
 import crypto from "crypto";
+import { signKey } from "../utils/s3Client.js";
 
 export async function findOrCreateConversation(sellerId, { customer_name, customer_email, customer_phone, store_slug }) {
   if (customer_email) {
@@ -42,12 +43,15 @@ export async function getConversationById(conversationId, sellerId) {
 
 export async function getMessages(conversationId) {
   const { rows } = await pool.query(
-    `SELECT id, sender, body, msg_type, quote_data, created_at, read_at
+    `SELECT id, sender, body, image_url, msg_type, quote_data, created_at, read_at
      FROM messages WHERE conversation_id = $1
      ORDER BY created_at ASC`,
     [conversationId]
   );
-  return rows;
+  return Promise.all(rows.map(async row => {
+    if (!row.image_url) return row;
+    return { ...row, image_url: await signKey(row.image_url) };
+  }));
 }
 
 export async function getMessageById(messageId) {
@@ -59,18 +63,20 @@ export async function getMessageById(messageId) {
   return rows[0] || null;
 }
 
-export async function insertMessage(conversationId, sender, body) {
+export async function insertMessage(conversationId, sender, body, imageUrl) {
   const { rows } = await pool.query(
-    `INSERT INTO messages (conversation_id, sender, body)
-     VALUES ($1, $2, $3)
-     RETURNING id, sender, body, msg_type, quote_data, created_at`,
-    [conversationId, sender, body]
+    `INSERT INTO messages (conversation_id, sender, body, image_url)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, sender, body, image_url, msg_type, quote_data, created_at`,
+    [conversationId, sender, body || null, imageUrl || null]
   );
   await pool.query(
     `UPDATE conversations SET updated_at = now() WHERE id = $1`,
     [conversationId]
   );
-  return rows[0];
+  const row = rows[0];
+  if (row.image_url) row.image_url = await signKey(row.image_url);
+  return row;
 }
 
 export async function insertQuoteMessage(conversationId, quoteData) {
@@ -116,7 +122,7 @@ export async function getConversationsForSeller(sellerId) {
   const { rows } = await pool.query(
     `SELECT
        c.id, c.customer_name, c.customer_email, c.customer_phone, c.updated_at,
-       (SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
+       (SELECT COALESCE(m.body, '📷 Imagen') FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
        (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.sender = 'customer' AND m.read_at IS NULL)::int AS unread_count
      FROM conversations c
      WHERE c.seller_id = $1
