@@ -1,4 +1,5 @@
 import pool from "../database/db.js";
+import { signKey } from "../utils/s3Client.js";
 
 // ── Admin <-> Seller direct chat ─────────────────────────────
 
@@ -22,7 +23,7 @@ export async function getAllAdminConversations() {
   const { rows } = await pool.query(`
     SELECT ac.id, ac.seller_id, ac.updated_at,
            s.name AS seller_name, s.email AS seller_email,
-           (SELECT body FROM admin_messages am
+           (SELECT COALESCE(am.body, '📷 Imagen') FROM admin_messages am
             WHERE am.conversation_id = ac.id ORDER BY am.created_at DESC LIMIT 1) AS last_message,
            (SELECT COUNT(*) FROM admin_messages am
             WHERE am.conversation_id = ac.id AND am.sender = 'seller' AND am.read_at IS NULL) AS unread_count
@@ -34,17 +35,22 @@ export async function getAllAdminConversations() {
 
 export async function getAdminMessages(conversationId) {
   const { rows } = await pool.query(
-    `SELECT id, sender, body, created_at, read_at
+    `SELECT id, sender, body, image_url, created_at, read_at
      FROM admin_messages WHERE conversation_id = $1 ORDER BY created_at ASC`, [conversationId]);
-  return rows;
+  return Promise.all(rows.map(async row => {
+    if (!row.image_url) return row;
+    return { ...row, image_url: await signKey(row.image_url) };
+  }));
 }
 
-export async function sendAdminMessage(conversationId, sender, body) {
+export async function sendAdminMessage(conversationId, sender, body, imageUrl) {
   const { rows } = await pool.query(
-    `INSERT INTO admin_messages (conversation_id, sender, body) VALUES ($1, $2, $3) RETURNING *`,
-    [conversationId, sender, body]);
+    `INSERT INTO admin_messages (conversation_id, sender, body, image_url) VALUES ($1, $2, $3, $4) RETURNING *`,
+    [conversationId, sender, body || null, imageUrl || null]);
   await pool.query(`UPDATE admin_conversations SET updated_at = now() WHERE id = $1`, [conversationId]);
-  return rows[0];
+  const row = rows[0];
+  if (row.image_url) row.image_url = await signKey(row.image_url);
+  return row;
 }
 
 export async function markAdminMessagesRead(conversationId, asSeenBySender) {
@@ -89,7 +95,7 @@ export async function getAllSellersWithChatInfo() {
   const { rows } = await pool.query(`
     SELECT s.id AS seller_id, s.name AS seller_name, s.email AS seller_email,
            ac.id AS conversation_id, ac.updated_at,
-           (SELECT am.body FROM admin_messages am
+           (SELECT COALESCE(am.body, '📷 Imagen') FROM admin_messages am
             WHERE am.conversation_id = ac.id ORDER BY am.created_at DESC LIMIT 1) AS last_message,
            COALESCE((SELECT COUNT(*) FROM admin_messages am
             WHERE am.conversation_id = ac.id AND am.sender = 'seller'
@@ -132,9 +138,9 @@ export async function getSellerAdminMessages(sellerId) {
   return { conversationId: conv.id, messages: await getAdminMessages(conv.id) };
 }
 
-export async function sellerSendAdminMessage(sellerId, body) {
+export async function sellerSendAdminMessage(sellerId, body, imageUrl) {
   const conv = await getOrCreateConversation(sellerId);
-  return sendAdminMessage(conv.id, 'seller', body);
+  return sendAdminMessage(conv.id, 'seller', body, imageUrl);
 }
 
 export async function getSellerUnreadAdminCount(sellerId) {
