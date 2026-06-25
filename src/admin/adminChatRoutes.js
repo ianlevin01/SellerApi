@@ -4,7 +4,8 @@ import requireAdminJWT from "../middleware/requireAdminJWT.js";
 import requireSeller   from "../middleware/requireSeller.js";
 import * as repo       from "./adminChatRepository.js";
 import { notifySellerAdminMessage } from "../email/buyerEmails.js";
-import { uploadBuffer } from "../utils/s3Client.js";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import s3, { BUCKET } from "../utils/s3Client.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -52,7 +53,7 @@ adminChatRouter.post("/upload-image", upload.single("file"), async (req, res) =>
     if (!req.file) return res.status(400).json({ message: "Sin archivo" });
     if (!req.file.mimetype.startsWith("image/")) return res.status(400).json({ message: "Solo se aceptan imágenes" });
     const key = chatImageKey(req.file.mimetype);
-    await uploadBuffer(key, req.file.buffer, req.file.mimetype);
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: req.file.buffer, ContentType: req.file.mimetype }));
     res.json({ key });
   } catch (err) {
     console.error("[chat-upload]", err.message);
@@ -91,7 +92,7 @@ sellerAdminChatRouter.post("/upload-image", upload.single("file"), async (req, r
     if (!req.file) return res.status(400).json({ message: "Sin archivo" });
     if (!req.file.mimetype.startsWith("image/")) return res.status(400).json({ message: "Solo se aceptan imágenes" });
     const key = chatImageKey(req.file.mimetype);
-    await uploadBuffer(key, req.file.buffer, req.file.mimetype);
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: req.file.buffer, ContentType: req.file.mimetype }));
     res.json({ key });
   } catch (err) {
     console.error("[chat-upload]", err.message);
