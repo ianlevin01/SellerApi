@@ -47,6 +47,15 @@ export async function findPublicByPage(pageId) {
          WHERE cp.combo_id = c.id), '[]'
       ) AS products,
       COALESCE(
+        (SELECT json_agg(cat_id)
+         FROM (
+           SELECT DISTINCT p2.category_id AS cat_id
+           FROM combo_products cp2
+           JOIN products p2 ON p2.id = cp2.product_id
+           WHERE cp2.combo_id = c.id AND p2.category_id IS NOT NULL
+         ) _cats), '[]'
+      ) AS category_ids,
+      COALESCE(
         (SELECT json_agg(ci.key ORDER BY ci."order")
          FROM combo_images ci WHERE ci.combo_id = c.id), '[]'
       ) AS image_keys

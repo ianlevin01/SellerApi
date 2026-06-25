@@ -6,7 +6,7 @@ import * as shippingRepository from "../shipping/shippingRepository.js";
 import * as payoutsService     from "../payouts/payoutsService.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
-import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending, notifyVentazNewSale } from "../email/buyerEmails.js";
+import { sendOrderReceived, sendPaymentConfirmed, sendSellerOrderPending, sendStockReserveConfirmed, notifyVentazNewSale, notifyVentazSellerRequest, notifyVentazStockReserve } from "../email/buyerEmails.js";
 import { crearPresupuesto } from "./gestionmayoristaService.js";
 import { markAbandonedCartPaid } from "./abandonedCartService.js";
 
@@ -301,6 +301,74 @@ export async function createCheckout({ slug, customer, items, shipping, seller }
   };
 }
 
+// ─── handlePaidOrder ─────────────────────────────────────────────────────────
+// Lógica compartida entre confirmPayment y handleWebhook cuando el pago se aprueba.
+
+async function handlePaidOrder(orderId) {
+  const basic = await repo.getOrderBasicWithType(orderId);
+  if (!basic) return;
+  const { seller_id, customer_email, order_type } = basic;
+
+  // ── Reserva de stock pagada: acreditar unidades al vendedor ──────────────
+  if (order_type === "stock_reserve") {
+    const items = await repo.getOrderItems(orderId);
+    await Promise.all(
+      items
+        .filter(i => i.product_id)
+        .map(i => repo.upsertSellerStockReserve(seller_id, i.product_id, i.quantity))
+    );
+    sendStockReserveConfirmed(orderId)
+      .catch(err => console.error("[email] stockReserveConfirmed error:", err.message));
+    notifyVentazStockReserve(orderId)
+      .catch(err => console.error("[email] notifyVentazStockReserve error:", err.message));
+    return;
+  }
+
+  // ── Solicitud de producto: despachar al vendedor como comprador ───────────
+  if (order_type === "seller_request") {
+    sendPaymentConfirmed(orderId);
+    notifyVentazSellerRequest(orderId)
+      .catch(err => console.error("[email] notifyVentazSellerRequest error:", err.message));
+    repo.getOrderItems(orderId)
+      .then(items => crearPresupuesto(items))
+      .then(result => console.log(`[gestionmayorista] presupuesto id=${result?.id ?? "?"}`))
+      .catch(err  => console.error("[gestionmayorista] seller_request error:", err.message));
+    return;
+  }
+
+  // ── Orden normal ─────────────────────────────────────────────────────────
+  markAbandonedCartPaid(seller_id, customer_email)
+    .catch(err => console.error("[abandonedCart] markPaid error:", err.message));
+
+  // Intentar consumir stock propio del vendedor por cada ítem
+  const allItems = await repo.getOrderItems(orderId);
+  const presupuestoItems = [];
+  for (const item of allItems) {
+    if (item.product_id) {
+      const usedQty = await repo.tryUseSellerStock(seller_id, item.product_id, item.quantity);
+      if (usedQty > 0) {
+        await repo.markItemSellerStock(orderId, item.product_id, usedQty);
+      }
+      const remainingQty = item.quantity - usedQty;
+      if (remainingQty > 0) {
+        presupuestoItems.push({ ...item, quantity: remainingQty });
+      }
+    } else {
+      presupuestoItems.push(item);
+    }
+  }
+
+  payoutsService.createEarningForOrder(orderId)
+    .catch(err => console.error("[payouts] createEarning error:", err.message));
+  sendPaymentConfirmed(orderId);
+
+  if (presupuestoItems.length > 0) {
+    crearPresupuesto(presupuestoItems)
+      .then(result => console.log(`[gestionmayorista] presupuesto id=${result?.id ?? "?"}`))
+      .catch(err  => console.error("[gestionmayorista] error:", err.message));
+  }
+}
+
 // ─── confirmPayment (llamado desde el front al volver del checkout de MP) ────
 
 const MP_STATUS_MAP = {
@@ -325,21 +393,10 @@ export async function confirmPayment(paymentId) {
 
   const newStatus = MP_STATUS_MAP[payment.status];
   if (newStatus && payment.external_reference) {
-    await repo.updateOrderStatus(payment.external_reference, newStatus, String(payment.id));
-
-    if (newStatus === "paid") {
-      repo.getOrderBasic(payment.external_reference)
-        .then(order => { if (order) markAbandonedCartPaid(order.seller_id, order.customer_email); })
-        .catch(err => console.error("[abandonedCart] markPaid error:", err.message));
-      payoutsService.createEarningForOrder(payment.external_reference)
-        .catch(err => console.error("[payouts] createEarning error:", err.message));
-      sendPaymentConfirmed(payment.external_reference);
-
-      // Crear presupuesto en gestionmayorista (background, no bloquea la respuesta)
-      repo.getOrderItems(payment.external_reference)
-        .then(items => crearPresupuesto(items))
-        .then(result => console.log(`[gestionmayorista] presupuesto creado id=${result?.id ?? "?"}`))
-        .catch(err  => console.error("[gestionmayorista] error al crear presupuesto:", err.message));
+    const updated = await repo.updateOrderStatus(payment.external_reference, newStatus, String(payment.id));
+    if (updated && newStatus === "paid") {
+      handlePaidOrder(payment.external_reference)
+        .catch(err => console.error("[confirmPayment] handlePaidOrder error:", err.message));
     }
   }
 
@@ -387,20 +444,14 @@ export async function handleWebhook(query, body) {
   const orderId = payment.external_reference;
   console.log(`[webhook] payment ${id} → ${payment.status} → order ${orderId}`);
 
-  await repo.updateOrderStatus(orderId, newStatus, String(payment.id));
+  const updated = await repo.updateOrderStatus(orderId, newStatus, String(payment.id));
 
-  if (newStatus === "paid") {
-    repo.getOrderBasic(orderId)
-      .then(order => { if (order) markAbandonedCartPaid(order.seller_id, order.customer_email); })
-      .catch(err => console.error("[abandonedCart] markPaid webhook error:", err.message));
-    payoutsService.createEarningForOrder(orderId)
-      .catch(err => console.error("[payouts] createEarning error:", err.message));
-    sendPaymentConfirmed(orderId);
+  if (updated && newStatus === "paid") {
+    handlePaidOrder(orderId)
+      .catch(err => console.error("[webhook] handlePaidOrder error:", err.message));
+  }
 
-    // Crear presupuesto en gestionmayorista (background)
-    repo.getOrderItems(orderId)
-      .then(items => crearPresupuesto(items))
-      .then(result => console.log(`[gestionmayorista] presupuesto creado id=${result?.id ?? "?"}`))
-      .catch(err  => console.error("[gestionmayorista] error al crear presupuesto:", err.message));
+  if (!updated) {
+    console.log(`[webhook] payment ${id} — orden ${orderId} ya en estado posterior, ignorado`);
   }
 }

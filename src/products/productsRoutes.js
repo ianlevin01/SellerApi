@@ -12,6 +12,13 @@ router.get   ("/",                                    productsController.getProd
 router.post  ("/add-all",                             productsController.addAllProducts);
 router.post  ("/ai/generate-description",             productsController.generateDescription);
 
+// Seller checkout
+router.post  ("/request-product",                     productsController.requestProduct);
+router.post  ("/reserve-stock",                       productsController.reserveStock);
+router.get   ("/my-reserves",                         productsController.getMyReserves);
+router.get   ("/shipping-quote",                      productsController.getShippingQuote);
+router.get   ("/shipping-agencies",                   productsController.getShippingAgencies);
+
 router.get   ("/:productId",                          productsController.getProduct);
 router.patch ("/:productId/customize",                productsController.customizeProduct);
 router.post  ("/:productId/ai/verify-name",           productsController.verifyProductName);

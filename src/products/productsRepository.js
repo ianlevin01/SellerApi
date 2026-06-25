@@ -48,6 +48,14 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
            AND ($1::uuid IS NULL OR si.page_id = $1)
            AND ($1::uuid IS NOT NULL OR si.page_id IS NULL)), '[]'
       ) AS seller_images,
+      COALESCE(
+        (SELECT ssr.quantity FROM seller_stock_reserves ssr
+         WHERE ssr.seller_id = $2 AND ssr.product_id = p.id LIMIT 1), 0
+      ) AS seller_own_stock,
+      GREATEST(0,
+        GREATEST(0, COALESCE((SELECT SUM(s2.quantity) FROM stock s2 WHERE s2.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0))
+        - COALESCE((SELECT SUM(ssr2.quantity) FROM seller_stock_reserves ssr2 WHERE ssr2.product_id = p.id), 0)
+      ) AS available_for_reserve,
       CASE
         WHEN (
           COALESCE(p.costo_usd, 0)
@@ -209,4 +217,46 @@ export async function setFreeShipping(pageId, sellerId, productId, freeShipping)
      WHERE page_id = $2 AND seller_id = $3 AND product_id = $4`,
     [Boolean(freeShipping), pageId, sellerId, productId]
   );
+}
+
+// ─── Funciones para sellerCheckoutService ────────────────────────────────────
+
+export async function getProductForCheckout(productId) {
+  const { rows } = await pool.query(
+    `SELECT p.id, p.name, p.costo_usd,
+            GREATEST(0,
+              COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+              - COALESCE(p.stock_reserva, 0)
+              - COALESCE((SELECT SUM(ssr.quantity) FROM seller_stock_reserves ssr WHERE ssr.product_id = p.id), 0)
+            ) AS available_for_reserve
+     FROM products p
+     WHERE p.id = $1 AND p.active = true`,
+    [productId]
+  );
+  return rows[0] || null;
+}
+
+export async function getSellerInfo(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT id, name, email FROM sellers WHERE id = $1`,
+    [sellerId]
+  );
+  return rows[0] || null;
+}
+
+export async function getSellerStockReserves(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT ssr.product_id, ssr.quantity, ssr.updated_at,
+            p.name AS product_name, p.code AS product_code,
+            COALESCE(
+              (SELECT json_agg(pi.key ORDER BY pi.created_at) FROM product_images pi WHERE pi.product_id = p.id),
+              '[]'
+            ) AS images
+     FROM seller_stock_reserves ssr
+     JOIN products p ON p.id = ssr.product_id
+     WHERE ssr.seller_id = $1 AND ssr.quantity > 0
+     ORDER BY ssr.updated_at DESC`,
+    [sellerId]
+  );
+  return rows;
 }

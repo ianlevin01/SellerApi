@@ -609,12 +609,14 @@ export async function sendOrderPackaged(order) {
 export async function sendOrderPackagedToSeller(orderId) {
   try {
     const { rows } = await pool.query(
-      `SELECT wo.numero, wo.customer_name, wo.seller_id
+      `SELECT wo.numero, wo.customer_name, wo.seller_id, wo.order_type
        FROM web_orders wo WHERE wo.id = $1`,
       [orderId]
     );
     const order = rows[0];
     if (!order?.seller_id) return;
+    // No notificar al vendedor cuando él mismo es el comprador (solicitud de producto)
+    if (order.order_type === "seller_request") return;
 
     const { rows: sellerRows } = await pool.query(
       `SELECT email, name FROM sellers WHERE id = $1`,
@@ -657,12 +659,13 @@ export async function sendOrderPackagedToSeller(orderId) {
 export async function sendOrderShippedToSeller(orderId, trackingNumber) {
   try {
     const { rows } = await pool.query(
-      `SELECT wo.numero, wo.customer_name, wo.seller_id
+      `SELECT wo.numero, wo.customer_name, wo.seller_id, wo.order_type
        FROM web_orders wo WHERE wo.id = $1`,
       [orderId]
     );
     const order = rows[0];
     if (!order?.seller_id) return;
+    if (order.order_type === "seller_request") return;
 
     const { rows: sellerRows } = await pool.query(
       `SELECT email, name FROM sellers WHERE id = $1`,
@@ -874,6 +877,234 @@ export async function sendAbandonedCartRecovery({ customerEmail, customerName, i
     console.error("[email] sendAbandonedCartRecovery error:", err.message);
   }
 }
+
+// ── Email: reserva de stock confirmada → vendedor ─────────────────────────────
+
+export async function sendStockReserveConfirmed(orderId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo.numero, wo.total, wo.seller_id,
+              (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity))
+               FROM web_order_items woi WHERE woi.web_order_id = wo.id) AS items
+       FROM web_orders wo WHERE wo.id = $1`,
+      [orderId]
+    );
+    const order = rows[0];
+    if (!order?.seller_id) return;
+
+    const { rows: sellerRows } = await pool.query(
+      `SELECT email, name FROM sellers WHERE id = $1`,
+      [order.seller_id]
+    );
+    const seller = sellerRows[0];
+    if (!seller?.email) return;
+
+    const first    = seller.name?.split(" ")[0] || "ahí";
+    const itemRows = (order.items || []).map(i =>
+      `<tr>
+        <td style="padding:10px 12px;font-size:14px;color:#374151;border-bottom:1px solid #f3f4f6">${i.name}</td>
+        <td style="padding:10px 12px;font-size:14px;color:#111827;font-weight:600;border-bottom:1px solid #f3f4f6;text-align:center">× ${i.quantity}</td>
+      </tr>`
+    ).join("");
+
+    const html = baseLayout(`
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;background:#f0fdf4;border-radius:50%;border:2px solid #bbf7d0">
+          <span style="font-size:36px;line-height:1">📦</span>
+        </div>
+      </div>
+      <h2 style="margin:0 0 10px;font-size:22px;font-weight:800;color:#111827;text-align:center">
+        ¡Reserva confirmada, ${first}!
+      </h2>
+      <p style="margin:0 0 28px;font-size:15px;color:#6b7280;text-align:center;line-height:1.6">
+        Tu pago fue acreditado. El stock reservado ya está disponible en tu panel.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <thead>
+          <tr style="background:#f9fafb">
+            <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:left;text-transform:uppercase;letter-spacing:.5px">Producto</th>
+            <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:center;text-transform:uppercase;letter-spacing:.5px">Cantidad</th>
+          </tr>
+        </thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;text-align:center;margin-bottom:8px">
+        <p style="margin:0;font-size:14px;color:#166534;font-weight:600">
+          Monto pagado: ${fmt(order.total)}
+        </p>
+      </div>
+      <p style="margin:16px 0 0;font-size:13px;color:#6b7280;text-align:center;line-height:1.6">
+        Cuando un cliente te compre estos productos, el stock se descuenta de tu reserva y vos te quedás con la ganancia completa.
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from:    `"Ventaz" <${process.env.SMTP_FROM_AWS || process.env.SMTP_USER}>`,
+      to:      seller.email,
+      subject: `📦 Reserva de stock confirmada — Pedido #${order.numero}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] sendStockReserveConfirmed error:", err.message);
+  }
+}
+
+// ── Notificación interna: solicitud de muestra → ventaz.oficial@gmail.com ────
+
+export async function notifyVentazSellerRequest(orderId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo.id, wo.numero, wo.total, wo.shipping_amount, wo.seller_id,
+              wo.customer_name, wo.customer_email,
+              (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity, 'unit_price_final', woi.unit_price_final))
+               FROM web_order_items woi WHERE woi.web_order_id = wo.id) AS items
+       FROM web_orders wo WHERE wo.id = $1`,
+      [orderId]
+    );
+    const order = rows[0];
+    if (!order) return;
+
+    const { rows: sellerRows } = await pool.query(
+      `SELECT name, email FROM sellers WHERE id = $1`,
+      [order.seller_id]
+    );
+    const seller = sellerRows[0];
+
+    const items  = order.items || [];
+    const shipping = Number(order.shipping_amount || 0);
+
+    const itemRows = items.map(i =>
+      `<tr>
+        <td style="padding:10px 12px;font-size:14px;color:#374151;border-bottom:1px solid #f3f4f6">${i.name}</td>
+        <td style="padding:10px 12px;font-size:14px;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;text-align:right">${fmt(i.unit_price_final)}</td>
+      </tr>`
+    ).join("");
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#fdf4ff;border:1px solid #e9d5ff;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">🎁</span>
+        <span style="font-size:14px;font-weight:600;color:#7e22ce">Solicitud de muestra</span>
+      </div>
+      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Pedido <span style="color:${BRAND}">#${order.numero}</span></h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <tr style="background:#f9fafb">
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:130px">Campo</td>
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Valor</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Vendedor</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${seller?.name || "—"} — ${seller?.email || "—"}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Tipo</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#7e22ce;border-top:1px solid #f3f4f6">Solicitud de muestra (1 unidad)</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Fecha</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}</td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <thead><tr style="background:#f9fafb">
+          <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:left;text-transform:uppercase;letter-spacing:.5px">Producto</th>
+          <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:.5px">Precio</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      ${totalBlock(Number(order.total), shipping)}
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      VENTAZ_INTERNAL,
+      subject: `🎁 Solicitud de muestra #${order.numero} — ${seller?.name || order.customer_name || "Vendedor"}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifyVentazSellerRequest error:", err.message);
+  }
+}
+
+// ── Notificación interna: reserva de stock pagada → ventaz.oficial@gmail.com ──
+
+export async function notifyVentazStockReserve(orderId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo.id, wo.numero, wo.total, wo.seller_id,
+              (SELECT json_agg(json_build_object('name', woi.name, 'quantity', woi.quantity, 'unit_price_final', woi.unit_price_final))
+               FROM web_order_items woi WHERE woi.web_order_id = wo.id) AS items
+       FROM web_orders wo WHERE wo.id = $1`,
+      [orderId]
+    );
+    const order = rows[0];
+    if (!order) return;
+
+    const { rows: sellerRows } = await pool.query(
+      `SELECT name, email FROM sellers WHERE id = $1`,
+      [order.seller_id]
+    );
+    const seller = sellerRows[0];
+
+    const items = order.items || [];
+    const totalQty = items.reduce((s, i) => s + (i.quantity || 0), 0);
+
+    const itemRows = items.map(i =>
+      `<tr>
+        <td style="padding:10px 12px;font-size:14px;color:#374151;border-bottom:1px solid #f3f4f6">${i.name}</td>
+        <td style="padding:10px 12px;font-size:14px;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;text-align:center">× ${i.quantity}</td>
+        <td style="padding:10px 12px;font-size:14px;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;text-align:right">${fmt(i.unit_price_final * i.quantity)}</td>
+      </tr>`
+    ).join("");
+
+    const html = baseLayout(`
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <span style="font-size:20px">📦</span>
+        <span style="font-size:14px;font-weight:600;color:#1d4ed8">Reserva de stock pagada</span>
+      </div>
+      <h2 style="margin:0 0 20px;font-size:22px;font-weight:700;color:#111827">Pedido <span style="color:${BRAND}">#${order.numero}</span></h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <tr style="background:#f9fafb">
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;width:130px">Campo</td>
+          <td style="padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Valor</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Vendedor</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${seller?.name || "—"} — ${seller?.email || "—"}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Tipo</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#1d4ed8;border-top:1px solid #f3f4f6">Reserva de stock (${totalQty} unidad${totalQty !== 1 ? "es" : ""})</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #f3f4f6">Fecha</td>
+          <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#111827;border-top:1px solid #f3f4f6">${new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}</td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <thead><tr style="background:#f9fafb">
+          <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:left;text-transform:uppercase;letter-spacing:.5px">Producto</th>
+          <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:center;text-transform:uppercase;letter-spacing:.5px">Cantidad</th>
+          <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:.5px">Subtotal</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;text-align:center">
+        <p style="margin:0;font-size:14px;color:#166534;font-weight:600">Total pagado: ${fmt(order.total)}</p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from:    FROM,
+      to:      VENTAZ_INTERNAL,
+      subject: `📦 Reserva de stock #${order.numero} — ${seller?.name || "Vendedor"} — ${fmt(order.total)}`,
+      html,
+    });
+  } catch (err) {
+    console.error("[email] notifyVentazStockReserve error:", err.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function notifySellerPayoutTransferred(sellerEmail, sellerName, amount, cvu) {
   const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";

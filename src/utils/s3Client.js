@@ -1,5 +1,5 @@
 // src/utils/s3Client.js
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const s3 = new S3Client({
@@ -27,6 +27,27 @@ export async function signKey(key) {
 // Firma un array de keys y devuelve el array con las URLs
 export async function signKeys(keys = []) {
   return Promise.all(keys.map(k => signKey(k)));
+}
+
+// Descarga un objeto de S3 y devuelve un Buffer
+export async function getBuffer(key) {
+  const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  const res = await s3.send(cmd);
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+// Sube un Buffer a S3 y devuelve la URL firmada
+export async function uploadBuffer(key, buffer, contentType = "image/png") {
+  const cmd = new PutObjectCommand({
+    Bucket:      BUCKET,
+    Key:         key,
+    Body:        buffer,
+    ContentType: contentType,
+  });
+  await s3.send(cmd);
+  return signKey(key);
 }
 
 export default s3;

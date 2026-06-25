@@ -1,6 +1,7 @@
 // src/modules/products/productsController.js
-import * as productsService  from "./productsService.js";
-import * as productAiService from "./productAiService.js";
+import * as productsService      from "./productsService.js";
+import * as productAiService     from "./productAiService.js";
+import * as sellerCheckoutService from "./sellerCheckoutService.js";
 
 function handleError(res, err) {
   if (err.status) return res.status(err.status).json({ message: err.message });
@@ -80,6 +81,52 @@ export async function verifyProductImage(req, res) {
     const originalName = await productAiService.getOriginalProductName(req.params.productId);
     if (!originalName) return res.status(404).json({ message: "Producto no encontrado" });
     const result = await productAiService.verifyProductImage(originalName, imageUrl);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+// ── Seller checkout: solicitar producto / reservar stock ──────────────────────
+
+export async function requestProduct(req, res) {
+  try {
+    const { product_id, shipping, page_id } = req.body;
+    if (!product_id) return res.status(400).json({ message: "product_id requerido" });
+    if (!shipping?.type) return res.status(400).json({ message: "shipping.type requerido" });
+    const result = await sellerCheckoutService.requestProductCheckout(req.seller.id, product_id, shipping, page_id || null);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function reserveStock(req, res) {
+  try {
+    const { product_id, quantity, page_id } = req.body;
+    if (!product_id) return res.status(400).json({ message: "product_id requerido" });
+    const result = await sellerCheckoutService.reserveStockCheckout(req.seller.id, product_id, Number(quantity), page_id || null);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getMyReserves(req, res) {
+  try {
+    const result = await sellerCheckoutService.getMyReserves(req.seller.id);
+    return res.json({ reserves: result });
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getShippingQuote(req, res) {
+  try {
+    const { postal_code } = req.query;
+    if (!postal_code) return res.status(400).json({ message: "postal_code requerido" });
+    const result = await sellerCheckoutService.getShippingQuote(postal_code);
+    return res.json(result);
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getShippingAgencies(req, res) {
+  try {
+    const { province, cp } = req.query;
+    if (!province) return res.status(400).json({ message: "province requerido" });
+    const result = await sellerCheckoutService.getShippingAgencies(province, cp || "");
     return res.json(result);
   } catch (err) { handleError(res, err); }
 }
