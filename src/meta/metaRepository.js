@@ -38,7 +38,8 @@ export async function upsertConnection(sellerId, { token, expiresAt, metaUserId,
 
 export async function getConnection(sellerId) {
   const { rows } = await pool.query(
-    `SELECT id, seller_id, token_expires_at, meta_user_id, meta_user_name, ad_account_id, updated_at
+    `SELECT id, seller_id, token_expires_at, meta_user_id, meta_user_name,
+            ad_account_id, ad_account_name, updated_at
      FROM meta_connections WHERE seller_id = $1`,
     [sellerId]
   );
@@ -53,10 +54,10 @@ export async function getConnectionWithToken(sellerId) {
   return rows[0] || null;
 }
 
-export async function setAdAccount(sellerId, adAccountId) {
+export async function setAdAccount(sellerId, adAccountId, adAccountName = null) {
   await pool.query(
-    `UPDATE meta_connections SET ad_account_id = $1, updated_at = now() WHERE seller_id = $2`,
-    [adAccountId, sellerId]
+    `UPDATE meta_connections SET ad_account_id = $1, ad_account_name = $2, updated_at = now() WHERE seller_id = $3`,
+    [adAccountId, adAccountName, sellerId]
   );
 }
 

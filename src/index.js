@@ -19,6 +19,7 @@ import { consumerPublicRouter, consumerAdminRouter } from "./consumer/consumerCh
 import onboardingRoutes    from "./onboarding/onboardingRoutes.js";
 import subscriptionRoutes from "./subscriptions/subscriptionRoutes.js";
 import academyRoutes      from "./academy/academyRoutes.js";
+import adsRoutes          from "./ads/adsRoutes.js";
 import metaRoutes         from "./meta/metaRoutes.js";
 import { startStockListener }       from "./stock/stockListener.js";
 import { startCampaignScheduler }   from "./email/campaignService.js";
@@ -85,6 +86,7 @@ app.use("/seller/ai-assistant",   aiAssistantRoutes);
 app.use("/seller/onboarding",     onboardingRoutes);
 app.use("/seller/subscriptions",  subscriptionRoutes);
 app.use("/academy",               academyRoutes);
+app.use("/seller/ads",            adsRoutes);
 app.use("/seller/meta",           metaRoutes);
 
 app.use("/admin/auth",             adminAuthRoutes);
