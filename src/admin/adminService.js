@@ -1,6 +1,8 @@
 import * as repo from "./adminRepository.js";
 import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
 import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged, sendOrderPackagedToSeller, sendOrderShipped, sendOrderShippedToSeller } from "../email/buyerEmails.js";
+import * as mlWalletService from "../ml/mlWalletService.js";
+import { getPlanMlGraceHours } from "../utils/sellerPlan.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -118,6 +120,65 @@ export async function updatePriceConfig(cotizacion) {
 
 export async function getSalesReport(filters) {
   return repo.getSalesReport(filters);
+}
+
+// Marca cada venta con `shippable` — el bloqueo es por CUENTA, no por pedido puntual: si el
+// vendedor tiene ALGUNA venta pendiente que ya superó su ventana de gracia sin cobrarse, se
+// bloquean TODAS sus ventas pendientes (incluso las recientes, todavía dentro de su propia
+// ventana) — mismo criterio que mlLabelService.getLabelsPdfForOrders, para que la pestaña de
+// acá coincida exactamente con lo que después se puede/no se puede imprimir.
+export async function getMlSales(filters) {
+  const rows = await repo.getMlSales(filters);
+
+  const matureBySeller = new Set();
+  const now = Date.now();
+  for (const row of rows) {
+    if (row.ml_charge_status !== "pending") continue;
+    const graceHours = getPlanMlGraceHours(row.plan_id);
+    const ageHours = (now - new Date(row.created_at).getTime()) / 3600000;
+    if (ageHours > graceHours) matureBySeller.add(row.seller_id);
+  }
+
+  return rows.map(row => ({
+    ...row,
+    shippable: row.ml_charge_status === "charged" || !matureBySeller.has(row.seller_id),
+  }));
+}
+
+// Pestaña "Cobros y deudas" — un renglón por vendedor conectado a ML con saldo/deuda/tarjeta.
+export async function getMlWalletOverview() {
+  const [sellers, pendingOrders] = await Promise.all([
+    repo.getMlWalletSellers(),
+    repo.getMlPendingOrdersAll(),
+  ]);
+
+  const bySeller = new Map();
+  for (const o of pendingOrders) {
+    if (!bySeller.has(o.seller_id)) bySeller.set(o.seller_id, []);
+    bySeller.get(o.seller_id).push(o);
+  }
+
+  const now = Date.now();
+  return sellers.map(s => {
+    const orders = bySeller.get(s.seller_id) || [];
+    const graceHours = getPlanMlGraceHours(s.plan_id);
+    const cutoffMs = now - graceHours * 3600000;
+    const pendingDebt = orders.reduce((sum, o) => sum + Number(o.ml_cost_amount || 0), 0);
+    const blockedDebt = orders
+      .filter(o => new Date(o.created_at).getTime() <= cutoffMs)
+      .reduce((sum, o) => sum + Number(o.ml_cost_amount || 0), 0);
+    return {
+      sellerId: s.seller_id, name: s.name, email: s.email, planId: s.plan_id,
+      hasCard: !!s.mp_card_id, lastFour: s.mp_card_last_four,
+      balance: Number(s.balance), pendingDebt, blockedDebt,
+    };
+  });
+}
+
+// Detalle de un vendedor puntual — reusa exactamente la misma lógica que ve el vendedor en
+// su propia pestaña Cobro (movimientos + intentos de cobro fallidos, ya unificados).
+export async function getMlSellerHistory(sellerId) {
+  return mlWalletService.getHistory(sellerId);
 }
 
 export async function updateProductDimensions(productId, body) {

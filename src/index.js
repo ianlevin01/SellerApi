@@ -21,10 +21,13 @@ import subscriptionRoutes from "./subscriptions/subscriptionRoutes.js";
 import academyRoutes      from "./academy/academyRoutes.js";
 import adsRoutes          from "./ads/adsRoutes.js";
 import metaRoutes         from "./meta/metaRoutes.js";
+import mlRoutes           from "./ml/mlRoutes.js";
 import { startStockListener }       from "./stock/stockListener.js";
 import { startCampaignScheduler }   from "./email/campaignService.js";
 import { startShippingTracker }     from "./jobs/shippingTracker.js";
 import { startAbandonedCartTracker } from "./jobs/abandonedCartTracker.js";
+import { startMlDailyChargeJob }     from "./ml/mlDailyChargeJob.js";
+import { startMlStockSync }          from "./jobs/mlStockSync.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -39,7 +42,7 @@ const ACADEMY_URL   = process.env.ACADEMY_URL;
 app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
-    if (origin.startsWith("http://localhost:")) return cb(null, true);
+    if (origin.startsWith("http://localhost:") || origin.startsWith("https://localhost:")) return cb(null, true);
     if (SELLER_APP  && origin === SELLER_APP)  return cb(null, true);
     if (ADMIN_PANEL && origin === ADMIN_PANEL) return cb(null, true);
     if (ACADEMY_URL && origin === ACADEMY_URL) return cb(null, true);
@@ -88,6 +91,7 @@ app.use("/seller/subscriptions",  subscriptionRoutes);
 app.use("/academy",               academyRoutes);
 app.use("/seller/ads",            adsRoutes);
 app.use("/seller/meta",           metaRoutes);
+app.use("/seller/ml",             mlRoutes);
 
 app.use("/admin/auth",             adminAuthRoutes);
 app.use("/admin",                  adminRoutes);
@@ -104,6 +108,8 @@ startStockListener();
 startCampaignScheduler();
 startShippingTracker();
 startAbandonedCartTracker();
+startMlDailyChargeJob();
+startMlStockSync();
 
 // Evita que la API crashee por promesas rechazadas sin capturar
 process.on("unhandledRejection", (reason) => {

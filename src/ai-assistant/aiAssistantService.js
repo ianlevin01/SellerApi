@@ -2,6 +2,9 @@ import OpenAI from "openai";
 import pool from "../database/db.js";
 import { calcShownCost, getSellerPlatformPct } from "../utils/pricing.js";
 import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
+import * as mlListingService from "../ml/mlListingService.js";
+import * as mlWalletService from "../ml/mlWalletService.js";
+import { getSellerPlan, getPlanMlGraceHours } from "../utils/sellerPlan.js";
 
 const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[]`;
 
@@ -15,22 +18,28 @@ Cuando el vendedor te pregunta algo sobre sus productos, combos, catálogo, stoc
 ══════════════════════════════════════════
 QUÉ ES VENTAZ
 ══════════════════════════════════════════
-Ventaz es una plataforma de reventa online en Argentina. Los vendedores crean su propia tienda con una URL única (SLUG.ventaz.com.ar), eligen productos del catálogo de Ventaz, configuran sus precios y venden a sus clientes. Ventaz maneja el stock, los costos base y la infraestructura técnica. No necesitás comprar stock ni guardar mercadería.
+Ventaz es una plataforma de reventa online en Argentina. Hay dos formas de vender el mismo catálogo, y un vendedor puede usar una o ambas:
+- ECOMMERCE: el vendedor crea su propia tienda con una URL única (SLUG.ventaz.com.ar).
+- MERCADO LIBRE: el vendedor publica productos del catálogo de Ventaz directamente en su propia cuenta de Mercado Libre (ver sección dedicada más abajo).
+En los dos casos, Ventaz maneja el stock, los costos base y la infraestructura técnica — el vendedor no compra stock ni guarda mercadería.
+
+Al registrarse, se le pregunta al vendedor cuál de los dos caminos quiere usar primero (pantalla "¿Cómo querés empezar?"). Esto no es una elección permanente: más adelante puede activar el otro canal también (conectar Mercado Libre desde el nav, o crear una tienda desde "Mis tiendas").
 
 ══════════════════════════════════════════
 PLANES DE SUSCRIPCIÓN
 ══════════════════════════════════════════
-Ventaz tiene tres planes de suscripción. Todos incluyen periodo de prueba gratuito de 15 días:
+Ventaz tiene tres planes de suscripción. Todos incluyen periodo de prueba gratuito de 15 días. Los beneficios aplican tanto a ecommerce como a Mercado Libre, sin importar cuál use el vendedor:
 
-- PLAN INICIAL: 1 tienda activa. Comisión plataforma según nivel de ventas (ver abajo). Cobros cada 14 días.
-- PLAN PRO: hasta 4 tiendas activas. Acceso a Academia Ventaz (cursos). Cobros cada 7 días. Carga de productos en masa.
-- PLAN MAX: tiendas ilimitadas. Cobros en el día. 10% de descuento sobre el precio mínimo de cada producto (mayor ganancia). Todo lo de Pro incluido.
+- PLAN INICIAL: 1 tienda activa. Hasta 10 publicaciones activas en Mercado Libre. Comisión plataforma según nivel de ventas (ver abajo). Cobros de ganancias de tienda cada 14 días. En Mercado Libre no tiene ventana de gracia para pagar: toda venta se cobra sí o sí en el corte del mismo día.
+- PLAN PRO: hasta 4 tiendas activas. Hasta 50 publicaciones activas en Mercado Libre. Acceso a Academia Ventaz (cursos). Cobros de tienda cada 7 días. Carga de productos en masa. En Mercado Libre tiene 24hs de gracia antes de que una venta sin cobrar se vuelva obligatoria.
+- PLAN MAX: tiendas ilimitadas. Publicaciones ilimitadas en Mercado Libre. Cobros de tienda en el día. 10% de descuento sobre el precio mínimo/costo de cada producto (aplica en tienda y en Mercado Libre). En Mercado Libre tiene 72hs de gracia. Todo lo de Pro incluido.
 
-Los planes se gestionan desde /subscription. Podés cambiar de plan en cualquier momento. Si cancelás, mantenés el acceso hasta que venza el período pagado.
+Los planes se gestionan desde /subscription. Podés cambiar de plan en cualquier momento. Si cancelás, mantenés el acceso hasta que venza el período pagado. Si se vence la prueba gratis o el plan sin renovar, en Mercado Libre esto pausa automáticamente las publicaciones activas — se reactivan solas al pagar de nuevo.
 
 ══════════════════════════════════════════
 PANEL DE CONTROL — SECCIONES
 ══════════════════════════════════════════
+El menú cambia según el track del vendedor. Un vendedor de track Mercado Libre NO ve en su menú: Cobros, Publicidad ni Chat (son cosas de tienda propia que no le sirven — cobra directo en su Mercado Pago y usa la mensajería nativa de ML). Si te preguntan por qué no ven alguna de esas secciones, es por eso, no es un error. El resto de las secciones (Dashboard, Mis tiendas, Mis pedidos, Estadísticas, Mercado Libre, Integraciones, Calculadora, Mi perfil, Suscripción) las ve todo el mundo.
 
 1. DASHBOARD (/dashboard) — Resumen visual de ventas, ganancias y pedidos recientes. Incluye la sección "Primeros pasos con Ventaz", un checklist de tareas de configuración inicial (completar perfil, crear tienda, agregar productos, configurar descuentos, activar integraciones). Cada ítem tiene un botón "Ir →" que lleva directo a la sección correspondiente y activa un tutorial paso a paso. Cuando todos los ítems están completos, el checklist desaparece.
    IMPORTANTE: la primera vez que un usuario se registra, al hacer login es redirigido automáticamente a Mis Tiendas para crear su primera tienda. No se crea ninguna tienda automáticamente.
@@ -56,6 +65,7 @@ PANEL DE CONTROL — SECCIONES
    (A mayor volumen de ventas acumuladas, menor comisión y mayor ganancia.)
 
 7. ESTADÍSTICAS (/estadisticas) — Ver visitas a la tienda, carritos creados, pedidos y facturación. Podés filtrar por 7, 14, 30 o 90 días. Si tenés varias tiendas, podés seleccionar cuál ver. Los datos se actualizan en tiempo real con cada visita o carrito nuevo.
+   Para un vendedor de track Mercado Libre esta pantalla es distinta: no hay "tienda" así que no muestra visitas ni carritos — muestra pedidos y facturación de Mercado Libre por día, más un resumen de publicaciones (activas, pausadas, con error, sin stock) y el top de publicaciones por ventas.
 
 8. COBROS (/cobros) — Ganancias acumuladas, solicitar transferencia a tu cuenta. Necesitás registrar tu CVU/CBU y que Ventaz lo verifique. Los plazos de cobro dependen del plan: 14 días (Inicial), 7 días (Pro), en el día (Max).
 
@@ -66,6 +76,7 @@ PANEL DE CONTROL — SECCIONES
     - "Equipo Ventaz": mensajes directos del equipo de Ventaz.
 
 11. CALCULADORA (/calculator) — Simulá precios y ganancias antes de publicar.
+    Para un vendedor de track Mercado Libre esta pantalla es distinta: en vez de los tramos por volumen de venta, buscás la categoría de Mercado Libre y cargás un precio, y te muestra cuánto te cobra ML de comisión ("Cargo por vender") y cuánto recibís — mismo cálculo que se ve al publicar un producto.
 
 12. ACADEMIA (/academia) — Cursos educativos de Ventaz para aprender a vender mejor. Disponible para planes Pro y Max. Próximamente para todos los planes.
 
@@ -81,6 +92,28 @@ PRECIOS Y GANANCIA
 - Precio promo: podés poner un precio de oferta temporal menor al precio regular. Aparece con badge "Precio promo" en tu tienda. También debe ser mayor al precio mínimo.
 - Tu ganancia = precio de venta − precio mínimo.
 - Plan Max: el precio mínimo baja un 10%, lo que aumenta tu ganancia potencial en todos los productos.
+
+══════════════════════════════════════════
+MERCADO LIBRE (/mercado-libre)
+══════════════════════════════════════════
+Acá el vendedor publica productos del catálogo de Ventaz directamente en su PROPIA cuenta de Mercado Libre (no es una tienda de Ventaz, es la cuenta personal del vendedor en ML). Tiene 3 pestañas: Resumen, Tus publicaciones, Catálogo, y Cobro (esta última no es una pestaña más, es la de plata — ver más abajo).
+
+CONECTAR LA CUENTA — Primer paso obligatorio: conectar la cuenta de Mercado Libre (OAuth) y guardar una tarjeta (para el cobro de ventas). Sin tarjeta guardada no se puede publicar.
+
+PUBLICAR UN PRODUCTO — Desde la pestaña Catálogo, "Publicar en Mercado Libre" en cualquier producto abre un formulario: buscar la categoría de ML (por palabras clave), completar los atributos requeridos por esa categoría (marca, modelo, medidas, etc. — algunos piden unidad, por ejemplo "50 cm"), elegir las fotos (las que ya tiene el producto se pueden tildar, y también se pueden subir fotos nuevas), y poner el precio de venta. El precio no puede ser menor al COSTO TOTAL del producto (lo que Ventaz necesita cobrar) — antes esto decía "precio mínimo", ahora dice "costo total" para que quede claro que es el piso real, no una sugerencia. Al elegir precio y categoría se muestra en vivo cuánto cobra Mercado Libre de comisión ("Cargo por vender") y cuánto recibís.
+
+COMBOS DE MERCADO LIBRE — Igual que en la tienda, se pueden armar combos (varios productos juntos, o más de uno del mismo producto) para publicar como UNA sola publicación de ML. Desde el botón "Crear combo" en el Catálogo, el botón de cada producto pasa a decir "Agregar al combo" — al tocarlo se suma al combo (se puede tocar varias veces para sumar cantidad), y aparece una barra fija abajo con "Finalizar combo". Ahí se ajustan las cantidades de cada producto, se elige categoría de ML y precio (el piso es la suma de costos de todos los productos según su cantidad), y las fotos se completan automáticamente con las fotos de todos los productos incluidos — no hace falta subir fotos nuevas para el combo.
+
+TUS PUBLICACIONES — Lista de publicaciones con estado: Activa, Pausada, Sin stock, Error de cobro. Se pueden pausar/reactivar a mano. El stock se revisa cada 15 minutos: si el pool de stock físico compartido se queda corto, la publicación se pausa sola (y se reactiva sola cuando vuelve a haber stock) — esto puede pasar aunque el vendedor no haya vendido nada, porque el stock es compartido entre todos los vendedores.
+
+COBRO DE VENTAS DE MERCADO LIBRE (pestaña Cobro) — Esto es lo más importante y lo que más dudas genera, explicalo con cuidado:
+- Cada venta de ML genera una deuda (el costo que Ventaz necesita cobrarle al vendedor). Todos los días a las 14:00 hs se intenta cobrar esa deuda, primero del saldo prepago (si cargó) y si no alcanza, de la tarjeta guardada.
+- PLAN INICIAL: no hay ventana de gracia. Toda la deuda es obligatoria de inmediato — se tiene que cobrar en el corte del mismo día.
+- PLAN PRO: 24hs de gracia desde cada venta. PLAN MAX: 72hs de gracia. Mientras una venta esté dentro de su ventana, los pedidos se siguen despachando aunque todavía no se haya cobrado esa parte.
+- Si se cumple la ventana de gracia (o es plan Inicial) y el cobro falla, esa deuda pasa a ser "obligatoria" (vencida) — ahí se pausan TODAS las publicaciones activas del vendedor y sus pedidos pendientes NO se despachan hasta que se pague (aunque algunos sean de ventas recientes todavía dentro de su propia gracia — el bloqueo es de toda la cuenta, no pedido por pedido).
+- Hay un botón "Pagar deuda ahora" para pagar manualmente desde la tarjeta guardada y desbloquear todo al instante, sin esperar al corte del otro día.
+- Hay un historial único con todos los movimientos: cargas de saldo, cobros exitosos, y también los intentos de cobro que fallaron (con el motivo).
+- Si hay deuda vencida sin pagar, aparece una alerta tanto en el Dashboard como en la pestaña Cobro.
 
 ══════════════════════════════════════════
 CÓMO VEN TU TIENDA LOS CLIENTES
@@ -162,6 +195,30 @@ const TOOLS = [
     function: {
       name: "get_my_combos",
       description: "Devuelve los combos que el vendedor tiene creados en su tienda, con precio, precio promo, productos incluidos y estado. Usá esta función cuando el vendedor pregunte sobre sus combos o packs.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_my_ml_listings",
+      description: "Devuelve las publicaciones que el vendedor tiene en Mercado Libre, con estado (activa/pausada/sin stock/error), precio, stock disponible y unidades vendidas. Usá esta función cuando el vendedor pregunte sobre sus publicaciones de Mercado Libre.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_my_ml_wallet",
+      description: "Devuelve el estado de cobro de Mercado Libre del vendedor: saldo, deuda pendiente, deuda obligatoria/vencida, si tiene tarjeta guardada, su plan y la ventana de gracia de ese plan. Usá esta función cuando el vendedor pregunte sobre deuda, cobros, pagos o por qué se le pausaron publicaciones en Mercado Libre.",
       parameters: {
         type: "object",
         properties: {},
@@ -324,6 +381,47 @@ async function toolGetMyCombos(ctx) {
   return { total: combos.length, combos };
 }
 
+const ML_STATUS_LABEL = { active: "Activa", paused: "Pausada" };
+const ML_PAUSE_LABEL  = { stock: "Sin stock", charge_failed: "Error de cobro", plan_expired: "Plan vencido", manual: "Pausada a mano" };
+
+async function toolGetMyMlListings(ctx) {
+  const listings = await mlListingService.getListings(ctx.sellerId);
+  if (!listings.length) return { message: "Todavía no tenés publicaciones en Mercado Libre." };
+
+  const items = listings.map(l => ({
+    producto:        l.product_name,
+    estado:          l.status === "paused" ? (ML_PAUSE_LABEL[l.pause_reason] || "Pausada") : (ML_STATUS_LABEL[l.status] || l.status),
+    precio:          `$${fmt(l.price)}`,
+    stock_disponible: l.available_stock,
+    unidades_vendidas: l.units_sold || 0,
+  }));
+
+  return { total: items.length, publicaciones: items };
+}
+
+async function toolGetMyMlWallet(ctx) {
+  const [balance, pendingDebt, blockedDebt, card, { plan_id }] = await Promise.all([
+    mlWalletService.getBalance(ctx.sellerId),
+    mlWalletService.getPendingDebt(ctx.sellerId),
+    mlWalletService.getBlockedDebt(ctx.sellerId),
+    mlWalletService.getCardStatus(ctx.sellerId),
+    getSellerPlan(ctx.sellerId),
+  ]);
+  const graceHours = getPlanMlGraceHours(plan_id);
+
+  return {
+    plan:                plan_id,
+    horas_de_gracia:     graceHours,
+    saldo_disponible:    `$${fmt(balance)}`,
+    deuda_pendiente_total: `$${fmt(pendingDebt)}`,
+    deuda_obligatoria_vencida: `$${fmt(blockedDebt)}`,
+    tarjeta_guardada:    card.hasCard ? `Terminada en ${card.lastFour}` : "No tiene",
+    publicaciones_bloqueadas: Number(blockedDebt) > 0
+      ? "Sí, tiene deuda vencida — publicaciones pausadas y pedidos sin despachar hasta que pague"
+      : "No",
+  };
+}
+
 async function toolGetSellerStats(ctx) {
   const { rows } = await pool.query(`
     SELECT
@@ -436,6 +534,12 @@ export async function chat(messages, sellerContext = null) {
           break;
         case "get_my_combos":
           result = await toolGetMyCombos(ctx);
+          break;
+        case "get_my_ml_listings":
+          result = await toolGetMyMlListings(ctx);
+          break;
+        case "get_my_ml_wallet":
+          result = await toolGetMyMlWallet(ctx);
           break;
         default:
           result = { error: "Función no reconocida" };

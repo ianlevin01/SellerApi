@@ -9,6 +9,10 @@ function handleError(res, err) {
 
 export async function getImages(req, res) {
   try {
+    if (req.query.all === "true") {
+      const result = await imagesService.getAllImagesForProduct(req.seller.id, req.params.productId);
+      return res.json(result);
+    }
     const pageId = req.query.pageId || null;
     const result = await imagesService.getImages(req.seller.id, req.params.productId, pageId);
     return res.json(result);

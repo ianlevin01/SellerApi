@@ -1192,3 +1192,101 @@ export async function notifySellerPayoutTransferred(sellerEmail, sellerName, amo
     console.error("[email] notifySellerPayoutTransferred error:", err.message);
   }
 }
+
+// ── Mercado Libre ─────────────────────────────────────────────
+
+export async function sendMlSaleNotification(sellerEmail, { numero, total }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:${BRAND_D}">Nueva venta en Mercado Libre</h2>
+    <p style="margin:0 0 16px;font-size:14px;color:#374151">
+      Pedido #${numero} — ${fmt(total)}. El costo se cobra en el corte diario, no hace falta que hagas nada ahora.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="${PANEL_URL}/orders" style="display:inline-block;background:${BRAND};color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 28px;border-radius:9px">
+        Ver mis pedidos →
+      </a>
+    </td></tr></table>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: `🛒 Nueva venta en Mercado Libre — Pedido #${numero}`, html });
+  } catch (err) {
+    console.error("[email] sendMlSaleNotification error:", err.message);
+  }
+}
+
+// blocking=true cuando esta falla es de la deuda obligatoria (ya venció la ventana de gracia
+// del plan) — ahí sí se pausan publicaciones y se bloquea el envío de esos pedidos. Si es la
+// deuda no obligatoria (todavía dentro de la gracia), no se bloquea nada, solo se avisa.
+export async function sendMlChargeFailedEmail(sellerEmail, { amount, reason, blocking = true }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const consequence = blocking
+    ? "Pausamos tus publicaciones en Mercado Libre y no vamos a poder despachar esos pedidos hasta que lo resuelvas."
+    : "Todavía estás dentro de tu ventana de gracia, así que por ahora no pasa nada — vamos a reintentar el cobro mañana.";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:#dc2626">No pudimos cobrar tus ventas de Mercado Libre</h2>
+    <p style="margin:0 0 16px;font-size:14px;color:#374151">
+      Intentamos cobrar ${fmt(amount)} y no pudimos completar el cobro (${reason || "tarjeta rechazada"}).
+      ${consequence}
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="${PANEL_URL}/mercado-libre" style="display:inline-block;background:#dc2626;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 28px;border-radius:9px">
+        ${blocking ? "Actualizar medio de pago →" : "Ver mi cuenta →"}
+      </a>
+    </td></tr></table>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "⚠️ No pudimos cobrar tus ventas de Mercado Libre", html });
+  } catch (err) {
+    console.error("[email] sendMlChargeFailedEmail error:", err.message);
+  }
+}
+
+export async function sendMlChargeSuccessEmail(sellerEmail, { amount }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:${BRAND_D}">Cobramos tus ventas de Mercado Libre</h2>
+    <p style="margin:0 0 16px;font-size:14px;color:#374151">
+      Te cobramos ${fmt(amount)} correspondiente a tus ventas de Mercado Libre. Tus publicaciones siguen activas
+      y tus pedidos van a despacharse con normalidad.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="${PANEL_URL}/mercado-libre" style="display:inline-block;background:${BRAND};color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 28px;border-radius:9px">
+        Ver mi cuenta →
+      </a>
+    </td></tr></table>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "✅ Te cobramos tus ventas de Mercado Libre", html });
+  } catch (err) {
+    console.error("[email] sendMlChargeSuccessEmail error:", err.message);
+  }
+}
+
+export async function sendMlQuestionNotification(sellerEmail, { itemTitle, questionText }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:${BRAND_D}">Nueva pregunta en Mercado Libre</h2>
+    <p style="margin:0 0 6px;font-size:14px;color:#374151"><strong>${itemTitle || "Tu publicación"}</strong></p>
+    <p style="margin:0 0 16px;font-size:14px;color:#6b7280;font-style:italic">"${questionText}"</p>
+    <p style="margin:0 0 16px;font-size:13px;color:#6b7280">Respondé desde tu cuenta de Mercado Libre.</p>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "❓ Nueva pregunta en Mercado Libre", html });
+  } catch (err) {
+    console.error("[email] sendMlQuestionNotification error:", err.message);
+  }
+}
+
+export async function sendMlClaimNotification(sellerEmail, { itemTitle, claimReason }) {
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:#dc2626">Reclamo en Mercado Libre</h2>
+    <p style="margin:0 0 6px;font-size:14px;color:#374151"><strong>${itemTitle || "Una de tus publicaciones"}</strong></p>
+    <p style="margin:0 0 16px;font-size:14px;color:#6b7280">${claimReason || "Revisá el detalle desde tu cuenta de Mercado Libre."}</p>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "⚠️ Reclamo en Mercado Libre", html });
+  } catch (err) {
+    console.error("[email] sendMlClaimNotification error:", err.message);
+  }
+}

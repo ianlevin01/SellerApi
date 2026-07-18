@@ -113,3 +113,11 @@ export async function getImages(sellerId, productId, pageId = null) {
     url: await signKey(img.key),
   })));
 }
+
+export async function getAllImagesForProduct(sellerId, productId) {
+  const rows = await imagesRepository.getAllImagesForProduct(sellerId, productId);
+  return Promise.all(rows.map(async img => ({
+    ...img,
+    url: await signKey(img.key),
+  })));
+}

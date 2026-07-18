@@ -149,7 +149,7 @@ export async function getOrders(sellerId) {
        wo.customer_city, wo.total,
        COALESCE(wo.shipping_amount, 0) AS shipping_amount,
        COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
-       wo.color, wo.created_at, wo.order_id,
+       wo.color, wo.created_at, wo.order_id, wo.channel,
        COALESCE(
          (SELECT json_agg(json_build_object(
            'name',                woi.name,

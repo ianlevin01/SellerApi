@@ -115,12 +115,13 @@ export async function login({ email, password }) {
   return {
     token,
     seller: {
-      id:         seller.id,
-      email:      seller.email,
-      name:       seller.name,
-      slug:       seller.slug,
-      store_name: seller.store_name,
-      pct_markup: seller.pct_markup,
+      id:               seller.id,
+      email:            seller.email,
+      name:             seller.name,
+      slug:             seller.slug,
+      store_name:       seller.store_name,
+      pct_markup:       seller.pct_markup,
+      onboarding_track: seller.onboarding_track,
     },
   };
 }
@@ -219,12 +220,13 @@ export async function googleLogin(idToken) {
   return {
     token,
     seller: {
-      id:         seller.id,
-      email:      seller.email,
-      name:       seller.name,
-      slug:       seller.slug,
-      store_name: seller.store_name,
-      pct_markup: seller.pct_markup,
+      id:               seller.id,
+      email:            seller.email,
+      name:             seller.name,
+      slug:             seller.slug,
+      store_name:       seller.store_name,
+      pct_markup:       seller.pct_markup,
+      onboarding_track: seller.onboarding_track,
     },
   };
 }

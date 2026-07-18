@@ -26,12 +26,16 @@ export async function incrementCart(slug) {
 }
 
 async function _analyticsQuery(pageId, sellerId, from, to) {
-  const { rows: visitRows } = await pool.query(`
-    SELECT date::text, visits AS count, carts
-    FROM store_analytics_daily
-    WHERE page_id = $1 AND date BETWEEN $2 AND $3
-    ORDER BY date
-  `, [pageId, from, to]);
+  // Sin pageId (seller sin tienda web, ej. solo vende por Mercado Libre) no hay
+  // visitas/carritos que mostrar — solo pedidos, que ya son seller-scoped.
+  const visitRows = pageId
+    ? (await pool.query(`
+        SELECT date::text, visits AS count, carts
+        FROM store_analytics_daily
+        WHERE page_id = $1 AND date BETWEEN $2 AND $3
+        ORDER BY date
+      `, [pageId, from, to])).rows
+    : [];
 
   const { rows: orderRows } = await pool.query(`
     SELECT
@@ -81,4 +85,10 @@ export async function getAnalytics(pageId, sellerId, from, to) {
   );
   if (!rows.length) { const e = new Error("Página no encontrada"); e.status = 404; throw e; }
   return _analyticsQuery(pageId, sellerId, from, to);
+}
+
+// Modo "Todos los canales" — sin pageId, agrega los pedidos del seller sin importar
+// si tiene tienda web o no (necesario para un seller que solo vende por Mercado Libre).
+export async function getAnalyticsAllChannels(sellerId, from, to) {
+  return _analyticsQuery(null, sellerId, from, to);
 }

@@ -4,6 +4,7 @@ import requireAdminJWT from "../middleware/requireAdminJWT.js";
 import * as svc from "./adminService.js";
 import * as repo from "./adminRepository.js";
 import { generateMailHtml, sendTestMail, sendMassMail } from "./mailingService.js";
+import { getLabelsPdfForOrders } from "../ml/mlLabelService.js";
 
 const router = Router();
 router.use(requireAdminJWT);
@@ -82,6 +83,32 @@ router.put("/products/:id/cost",             h(req => svc.updateProductCost(req.
 router.put("/products/:id/dimensions",       h(req => svc.updateProductDimensions(req.params.id, req.body)));
 router.get("/price-config",                  h(() => svc.getPriceConfig()));
 router.put("/price-config",                  h(req => svc.updatePriceConfig(req.body.cotizacion)));
+
+// Mercado Libre
+router.get("/ml/sales", h(req => svc.getMlSales({
+  from:         req.query.from   || null,
+  to:           req.query.to     || null,
+  chargeStatus: req.query.charge_status || null,
+})));
+
+router.post("/ml/labels", async (req, res) => {
+  try {
+    const { orderIds, force } = req.body || {};
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: "Faltan orderIds" });
+    }
+    const { buffer, errors } = await getLabelsPdfForOrders(orderIds, { force: !!force });
+    if (errors.length) res.setHeader("X-Label-Warnings", encodeURIComponent(errors.join(" | ")));
+    res.setHeader("Content-Type", "application/pdf");
+    res.send(buffer);
+  } catch (err) {
+    console.error("[admin] ml/labels:", err.message);
+    res.status(err.status || 500).json({ message: err.message || "No se pudieron generar las etiquetas" });
+  }
+});
+
+router.get("/ml/wallets",                    h(() => svc.getMlWalletOverview()));
+router.get("/ml/sellers/:id/history",        h(req => svc.getMlSellerHistory(req.params.id)));
 
 // Mailing IA
 router.post("/mailing/generate", async (req, res) => {

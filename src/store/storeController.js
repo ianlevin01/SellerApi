@@ -246,6 +246,19 @@ export async function getPageAnalytics(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+// Vista "Todos los canales" — sin pageId, para sellers sin tienda web (ej. solo Mercado Libre)
+// o para ver el total agregado de todas las páginas + canales.
+export async function getAllChannelsAnalytics(req, res) {
+  try {
+    const sellerId = req.seller.id;
+    const now = new Date();
+    const from = req.query.from || toART(new Date(now.getTime() - 29 * 86400000));
+    const to   = req.query.to   || toART(now);
+    const data = await analyticsRepo.getAnalyticsAllChannels(sellerId, from, to);
+    return res.json(data);
+  } catch (err) { handleError(res, err); }
+}
+
 export async function getAbandonedCarts(req, res) {
   try {
     const { pageId } = req.params;

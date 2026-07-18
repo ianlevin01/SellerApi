@@ -54,3 +54,48 @@ export async function dismissOnboarding(sellerId) {
     [sellerId]
   );
 }
+
+// Progreso de onboarding para el track de Mercado Libre — no usa Cobros/payouts porque en
+// ese flujo el vendedor cobra directo en su propia cuenta de MP (ver mlWalletService.js).
+export async function getOnboardingProgressMl(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT EXISTS(SELECT 1 FROM ml_connections WHERE seller_id = $1 AND ml_user_id IS NOT NULL))
+         AS connect_ml,
+
+       (SELECT EXISTS(SELECT 1 FROM ml_connections WHERE seller_id = $1 AND mp_card_id IS NOT NULL))
+         AS save_card,
+
+       (SELECT COUNT(*) >= 1 FROM ml_listings WHERE seller_id = $1)
+         AS first_listing,
+
+       COALESCE((
+         SELECT (phone IS NOT NULL AND avatar_key IS NOT NULL)
+         FROM sellers WHERE id = $1
+       ), false)
+         AS complete_profile,
+
+       (SELECT EXISTS(SELECT 1 FROM web_orders WHERE seller_id = $1 AND channel = 'mercadolibre'))
+         AS first_sale_ml,
+
+       (SELECT onboarding_dismissed_at IS NOT NULL FROM sellers WHERE id = $1)
+         AS dismissed`,
+    [sellerId]
+  );
+  return rows[0] || {};
+}
+
+// El JWT del seller no lleva onboarding_track (se firmó en el login, y esto puede cambiar
+// después) — hay que consultarlo fresco en vez de confiar en el token.
+export async function getSellerOnboardingTrack(sellerId) {
+  const { rows } = await pool.query(`SELECT onboarding_track FROM sellers WHERE id = $1`, [sellerId]);
+  return rows[0]?.onboarding_track || null;
+}
+
+export async function setOnboardingTrack(sellerId, track) {
+  const { rows } = await pool.query(
+    `UPDATE sellers SET onboarding_track = $1 WHERE id = $2 RETURNING id, onboarding_track`,
+    [track, sellerId]
+  );
+  return rows[0] || null;
+}

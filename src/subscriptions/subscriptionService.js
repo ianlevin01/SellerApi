@@ -1,6 +1,7 @@
 import axios from "axios";
 import * as repo from "./subscriptionRepository.js";
 import { transporter } from "../config/mailer.js";
+import * as listingSvc from "../ml/mlListingService.js";
 
 const NOTIFY_EMAIL = "ventaz.oficial@gmail.com";
 
@@ -74,6 +75,13 @@ function getBackUrl() {
 
 // ── Resolución de estado ─────────────────────────────────────
 
+// Nunca debe romper la resolución del estado del plan si Mercado Libre falla — se loguea y
+// listo, el pausado se reintenta en el próximo ciclo de todos modos.
+function pauseMlListingsQuietly(sellerId) {
+  listingSvc.pauseListingsForPlanExpiration(sellerId).catch(err =>
+    console.error(`[subscriptions] no se pudieron pausar publicaciones de ML del seller ${sellerId}:`, err.message));
+}
+
 export async function resolveStatus(seller) {
   const now = new Date();
 
@@ -82,6 +90,7 @@ export async function resolveStatus(seller) {
     const trialEnd = new Date(seller.trial_ends_at);
     if (now > trialEnd) {
       await repo.updateSellerSubscription(seller.id, { plan_status: "expired" });
+      pauseMlListingsQuietly(seller.id);
       return { ...seller, plan_status: "expired" };
     }
   }
@@ -93,9 +102,11 @@ export async function resolveStatus(seller) {
       if (seller.pending_plan_id) {
         // Aplicar downgrade pendiente
         await repo.applyPendingPlan(seller.id, seller.pending_plan_id);
+        pauseMlListingsQuietly(seller.id);
         return { ...seller, plan_id: seller.pending_plan_id, plan_status: "expired", pending_plan_id: null };
       } else {
         await repo.updateSellerSubscription(seller.id, { plan_status: "expired" });
+        pauseMlListingsQuietly(seller.id);
         return { ...seller, plan_status: "expired" };
       }
     }
@@ -369,6 +380,8 @@ export async function handleWebhook(type, dataId) {
     repo.getPlanById(planId)
       .then(plan => notifyPlanPayment(seller, plan?.name || planId, plan?.price_ars || mpSub.auto_recurring?.transaction_amount))
       .catch(() => {});
+    listingSvc.reactivateListingsAfterPlanRenewal(seller.id).catch(err =>
+      console.error(`[sub-webhook] no se pudieron reactivar publicaciones de ML del seller ${seller.id}:`, err.message));
   }
 }
 
@@ -420,6 +433,8 @@ export async function handlePaymentWebhook(paymentId) {
     console.log(`[pay-webhook] ✓ plan activado para seller="${seller.id}"`);
     const plan = await repo.getPlanById(seller.plan_id);
     await notifyPlanPayment(seller, plan?.name || seller.plan_id, payment.transaction_amount);
+    listingSvc.reactivateListingsAfterPlanRenewal(seller.id).catch(err =>
+      console.error(`[pay-webhook] no se pudieron reactivar publicaciones de ML del seller ${seller.id}:`, err.message));
   }
 
   // Guardar registro del pago en historial

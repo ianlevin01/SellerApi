@@ -252,6 +252,51 @@ export async function getAllOrders({ sellerId, status, from, to, limit = 100, of
   return rows;
 }
 
+// ── Mercado Libre ──────────────────────────────────────────────
+
+export async function getMlSales({ from, to, chargeStatus } = {}) {
+  const conditions = [`wo.channel = 'mercadolibre'`];
+  const params     = [];
+
+  if (chargeStatus) { params.push(chargeStatus); conditions.push(`wo.ml_charge_status = $${params.length}`); }
+  if (from)         { params.push(from);         conditions.push(`wo.created_at >= $${params.length}`); }
+  if (to)           { params.push(to);           conditions.push(`wo.created_at <= $${params.length} + interval '1 day'`); }
+
+  const { rows } = await pool.query(`
+    SELECT wo.id, wo.numero, wo.customer_name, wo.total, wo.ml_order_id, wo.ml_shipment_id,
+           wo.ml_cost_amount, wo.ml_charge_status, wo.created_at,
+           s.id AS seller_id, s.name AS seller_name, s.email AS seller_email, s.plan_id,
+           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price))
+             FROM web_order_items woi WHERE woi.web_order_id = wo.id), '[]') AS items
+    FROM web_orders wo
+    JOIN sellers s ON s.id = wo.seller_id
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY wo.created_at DESC`, params);
+  return rows;
+}
+
+// Todos los pedidos de ML todavía sin cobrar, de TODOS los vendedores — para calcular en JS
+// (junto con el plan de cada uno) cuáles tienen deuda vencida sin pagar.
+export async function getMlPendingOrdersAll() {
+  const { rows } = await pool.query(`
+    SELECT seller_id, id AS order_id, ml_cost_amount, created_at
+    FROM web_orders WHERE channel = 'mercadolibre' AND ml_charge_status = 'pending'`);
+  return rows;
+}
+
+// Vendedores con Mercado Libre conectado — base para la pestaña "Cobros y deudas".
+export async function getMlWalletSellers() {
+  const { rows } = await pool.query(`
+    SELECT s.id AS seller_id, s.name, s.email, s.plan_id,
+           mc.mp_card_id, mc.mp_card_last_four,
+           COALESCE((SELECT SUM(t.amount) FROM ml_wallet_transactions t
+             WHERE t.seller_id = s.id AND t.method = 'balance'), 0) AS balance
+    FROM sellers s
+    JOIN ml_connections mc ON mc.seller_id = s.id AND mc.ml_user_id IS NOT NULL
+    ORDER BY s.name`);
+  return rows;
+}
+
 export async function getSellerBasic(sellerId) {
   const { rows } = await pool.query(
     `SELECT s.id, s.email, s.name, sp.slug

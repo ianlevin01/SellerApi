@@ -30,7 +30,7 @@ export async function findSellerById(id) {
   await ensureProfileColumns();
   const { rows } = await pool.query(
     `SELECT s.id, s.email, s.name, s.first_name, s.last_name, s.phone, s.phone_verified,
-            s.city, s.age, s.birth_date, s.how_found_us, s.avatar_key, s.cvu,
+            s.city, s.age, s.birth_date, s.how_found_us, s.avatar_key, s.cvu, s.onboarding_track,
             sp.slug, sp.store_name, sp.store_description,
             sp.banner_color, sp.logo_key, sp.pct_markup
      FROM sellers s
