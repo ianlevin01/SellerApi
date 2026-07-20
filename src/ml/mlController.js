@@ -298,8 +298,11 @@ export async function searchProducts(req, res) {
 // GET /seller/ml/products/:productId/price-floor
 export async function getPriceFloor(req, res) {
   try {
-    const floor = await listingSvc.getPriceFloor(req.seller.id, req.params.productId);
-    return res.json({ floor });
+    const [floor, shipping] = await Promise.all([
+      listingSvc.getPriceFloor(req.seller.id, req.params.productId),
+      listingSvc.getProductShippingInfo(req.params.productId),
+    ]);
+    return res.json({ floor, ...shipping });
   } catch (err) {
     console.error("[ml] getPriceFloor:", err.message);
     return res.status(err.status || 500).json({ message: err.message || "Error" });
@@ -321,12 +324,12 @@ export async function suggestTitle(req, res) {
   }
 }
 
-// POST /seller/ml/suggest/description  { productName, description }
+// POST /seller/ml/suggest/description  { productName, description, imageUrls }
 export async function suggestDescription(req, res) {
   try {
-    const { productName, description } = req.body;
+    const { productName, description, imageUrls } = req.body;
     if (!productName) return res.status(400).json({ message: "Falta productName" });
-    const description_ = await aiSvc.suggestDescription(productName, description);
+    const description_ = await aiSvc.suggestDescription(productName, description, imageUrls);
     return res.json({ description: description_ });
   } catch (err) {
     console.error("[ml] suggestDescription:", err.message);
@@ -334,12 +337,12 @@ export async function suggestDescription(req, res) {
   }
 }
 
-// POST /seller/ml/suggest/attributes  { productName, description, categoryName, attrDefs }
+// POST /seller/ml/suggest/attributes  { productName, description, categoryName, attrDefs, imageUrls }
 export async function suggestAttributes(req, res) {
   try {
-    const { productName, description, categoryName, attrDefs } = req.body;
+    const { productName, description, categoryName, attrDefs, imageUrls } = req.body;
     if (!productName || !Array.isArray(attrDefs)) return res.status(400).json({ message: "Faltan datos" });
-    const values = await aiSvc.suggestAttributeValues(productName, description, categoryName, attrDefs);
+    const values = await aiSvc.suggestAttributeValues(productName, description, categoryName, attrDefs, imageUrls);
     return res.json({ values });
   } catch (err) {
     console.error("[ml] suggestAttributes:", err.message);

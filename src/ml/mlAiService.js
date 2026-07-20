@@ -36,9 +36,20 @@ Respondé SOLO el título, sin comillas ni explicación.`,
   return res.choices[0].message.content.trim().replace(/^"|"$/g, "").slice(0, 60);
 }
 
+// Arma el content de un mensaje de usuario con imágenes reales del producto (si hay) — permite
+// que el modelo vea el producto en vez de adivinar a ciegas a partir del título/descripción.
+function buildUserContent(text, imageUrls) {
+  if (!imageUrls?.length) return text;
+  return [
+    { type: "text", text },
+    ...imageUrls.slice(0, 4).map(url => ({ type: "image_url", image_url: { url } })),
+  ];
+}
+
 // Descripción plana (sin HTML) para Mercado Libre — expande lo que ya cargó el vendedor,
-// nunca inventa specs que no estén en el nombre/descripción original.
-export async function suggestDescription(productName, existingDescription) {
+// apoyándose en las fotos reales del producto cuando están disponibles (en vez de inventar
+// medidas/materiales que no se mencionaron ni se ven en la imagen).
+export async function suggestDescription(productName, existingDescription, imageUrls = []) {
   const ai  = getClient();
   const res = await ai.chat.completions.create({
     model:       "gpt-4o-mini",
@@ -48,14 +59,18 @@ export async function suggestDescription(productName, existingDescription) {
       {
         role:    "system",
         content: `Sos un experto redactor de publicaciones para Mercado Libre Argentina.
-Expandí y mejorá la descripción del vendedor, usándola como única fuente — no inventes medidas,
-materiales ni especificaciones que no haya mencionado.
+Expandí y mejorá la descripción del vendedor. Si te paso fotos del producto, mirá lo que se ve
+en ellas (color, materiales, forma, accesorios incluidos, etc.) y usalo como fuente además del
+texto — no inventes nada que no esté mencionado ni sea visible en las fotos.
 Formato: texto plano (Mercado Libre no acepta HTML), párrafos cortos, tono claro y comercial.
 Devolvé SOLO el texto de la descripción, sin explicaciones ni markdown.`,
       },
       {
         role:    "user",
-        content: `Producto: "${productName}"\nDescripción del vendedor: "${existingDescription || "(sin descripción, generá una genérica acorde al nombre)"}"`,
+        content: buildUserContent(
+          `Producto: "${productName}"\nDescripción del vendedor: "${existingDescription || "(sin descripción, generá una genérica acorde al nombre y, si hay fotos, a lo que se ve en ellas)"}"`,
+          imageUrls,
+        ),
       },
     ],
   });
@@ -65,7 +80,9 @@ Devolvé SOLO el texto de la descripción, sin explicaciones ni markdown.`,
 // Sugiere valores para atributos todavía vacíos — si el atributo tiene una lista fija de
 // valores (attr.values), tiene que elegir UNO de esos nombres tal cual, nunca inventar uno
 // nuevo (rompería la publicación). Si no tiene lista, propone texto libre corto.
-export async function suggestAttributeValues(productName, existingDescription, categoryName, attrDefs) {
+// Con fotos del producto, el modelo puede inferir color/material/forma en vez de adivinar
+// casi al azar a partir del título — esto es lo que evita respuestas erráticas.
+export async function suggestAttributeValues(productName, existingDescription, categoryName, attrDefs, imageUrls = []) {
   if (!attrDefs.length) return {};
   const ai = getClient();
 
@@ -84,14 +101,18 @@ export async function suggestAttributeValues(productName, existingDescription, c
         role:    "system",
         content: `Sos un experto en publicar productos en Mercado Libre Argentina.
 Te doy un producto y una lista de atributos de su categoría todavía sin completar. Para cada uno, proponé el valor más probable.
+Si te paso fotos del producto, priorizá lo que se ve en ellas (color, material, forma, cantidad de piezas, etc.) por sobre suposiciones genéricas del título.
 Si el atributo tiene "opciones válidas", tenés que responder EXACTAMENTE uno de esos textos, tal cual está escrito — nunca inventes uno nuevo.
 Si no tiene opciones (es texto libre), proponé un valor corto y realista.
-Si genuinamente no podés inferir un valor razonable para alguno, no lo incluyas en la respuesta (mejor omitirlo que inventar).
+Si genuinamente no podés inferir un valor razonable para alguno (ni por texto ni por foto), no lo incluyas en la respuesta (mejor omitirlo que inventar).
 Respondé SOLO JSON: { "valores": { "<id_del_atributo>": "<valor>", ... } }`,
       },
       {
         role:    "user",
-        content: `Producto: "${productName}"\nDescripción: "${existingDescription || "(sin descripción)"}"\nCategoría: "${categoryName || "(sin especificar)"}"\n\nAtributos a completar:\n${attrList}`,
+        content: buildUserContent(
+          `Producto: "${productName}"\nDescripción: "${existingDescription || "(sin descripción)"}"\nCategoría: "${categoryName || "(sin especificar)"}"\n\nAtributos a completar:\n${attrList}`,
+          imageUrls,
+        ),
       },
     ],
   });

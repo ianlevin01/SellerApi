@@ -39,6 +39,13 @@ export async function getPriceFloor(sellerId, productId) {
   return shownCostWithOverride(rows[0].costo_usd, cotizacion, platformPct, plan_id, markupPct);
 }
 
+// Peso/volumen para pedir el costo de envío en el wizard de publicar (el listado de productos
+// de ecommerce que alimenta el catálogo de ML no trae estos dos campos).
+export async function getProductShippingInfo(productId) {
+  const { rows } = await pool.query(`SELECT weight_grams, volume_cm3 FROM products WHERE id = $1`, [productId]);
+  return { weightGrams: Number(rows[0]?.weight_grams || 0), volumeCm3: Number(rows[0]?.volume_cm3 || 0) };
+}
+
 // Para la calculadora: buscar productos reales del catálogo por nombre y devolver ya
 // resuelto el peso/volumen y el costo total (mismo cálculo que getPriceFloor), para que el
 // vendedor solo tenga que cargar precio/envío/cuotas.
@@ -184,9 +191,14 @@ function fillMissingPackageDimensions(attributes, weightGrams, volumeCm3) {
   return [...attributes, ...needed.map(id => ({ id, value_name: values[id] }))];
 }
 
+// shippingFreeUsed viaja en el resultado porque el reintento de más abajo puede terminar
+// publicando con un envío gratis distinto al que pidió el vendedor — sin esto, lo que
+// guardamos en nuestra base quedaría desincronizado de lo que realmente tiene la publicación
+// en Mercado Libre.
 async function createMlItem(token, payload) {
   try {
-    return await svc.createItem(token, payload);
+    const item = await svc.createItem(token, payload);
+    return { ...item, shippingFreeUsed: !!payload.shippingFree };
   } catch (err) {
     // ML manda un texto en inglés poco claro cuando la cuenta no tiene Mercado Envíos
     // activo (necesario porque siempre publicamos con shipping.mode = "me2") — lo
@@ -195,6 +207,13 @@ async function createMlItem(token, payload) {
       const e = new Error("Tu cuenta de Mercado Libre no tiene Mercado Envíos activado. Entrá a mercadolibre.com.ar → Configuración → Envíos y activalo antes de publicar.");
       e.status = 400;
       throw e;
+    }
+    // Para algunas categorías/precios, Mercado Libre exige envío gratis obligatorio (según
+    // categoría y monto) — si el vendedor no lo tildó y ML lo rechaza por eso, reintentamos
+    // una vez solos con envío gratis en vez de hacerle adivinar el motivo del error.
+    if (!payload.shippingFree && /free.?shipping|envío gratis|shipping.*mandatory/i.test(err.message)) {
+      const item = await svc.createItem(token, { ...payload, shippingFree: true });
+      return { ...item, shippingFreeUsed: true };
     }
     throw err;
   }
@@ -247,12 +266,13 @@ export async function publishProduct(sellerId, productId, config) {
     dimensions:  estimateShippingDimensions(product.weight_grams, product.volume_cm3),
     attributes,
     shippingFree: config.shippingFree,
+    listingTypeId: config.listingTypeId || "gold_special",
   });
 
   return repo.createListing(sellerId, {
     productId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
-    attributes, shippingFree: config.shippingFree,
+    attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
   });
 }
@@ -384,12 +404,13 @@ export async function publishCombo(sellerId, comboId, config) {
     dimensions:  estimateShippingDimensions(totalWeight, totalVolume),
     attributes,
     shippingFree: config.shippingFree,
+    listingTypeId: config.listingTypeId || "gold_special",
   });
 
   return repo.createListing(sellerId, {
     comboId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
-    attributes, shippingFree: config.shippingFree,
+    attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
   });
 }
