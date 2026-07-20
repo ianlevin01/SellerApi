@@ -36,18 +36,18 @@ async function findOrCreateCustomer(sellerEmail) {
 
 // Autoriza un monto chico contra la tarjeta y lo cancela en el acto — confirma que la
 // tarjeta es real y tiene fondos, sin cobrar nada de verdad (capture: false + cancelación).
-async function verifyCard({ mpCustomerId, mpCardId, paymentMethodId, externalReference }) {
-  const cardToken = await axios.post(
-    `${MP_BASE}/v1/card_tokens`,
-    { card_id: mpCardId, customer_id: mpCustomerId },
-    { headers: mpHeaders() }
-  );
-
+//
+// Usa el MISMO token que generó el SDK en el frontend (con el CVV que tipeó el vendedor), en
+// vez de regenerar uno nuevo a partir de card_id+customer_id — ese segundo tipo de token es
+// para cobros futuros "fuera de sesión" (sin CVV, el vendedor ya no está presente) y Mercado
+// Pago lo rechaza acá con "secure_code_id can't be null" porque esta verificación sí pasa con
+// el vendedor presente, recién guardando la tarjeta.
+async function verifyCard({ mpCustomerId, cardToken, paymentMethodId, externalReference }) {
   const payment = await axios.post(
     `${MP_BASE}/v1/payments`,
     {
       transaction_amount: CARD_VERIFICATION_AMOUNT,
-      token:              cardToken.data.id,
+      token:              cardToken,
       description:        "Verificación de tarjeta — Ventaz",
       installments:       1,
       payment_method_id:  paymentMethodId,
@@ -96,7 +96,7 @@ export async function saveCard(sellerEmail, cardToken) {
 
   const verification = await verifyCard({
     mpCustomerId:    result.mpCustomerId,
-    mpCardId:        result.mpCardId,
+    cardToken,
     paymentMethodId: result.paymentMethodId,
     externalReference: `card-verify-${customerId}-${Date.now()}`,
   });
