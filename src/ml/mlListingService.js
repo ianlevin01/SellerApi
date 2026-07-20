@@ -8,6 +8,20 @@ import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan, getPlanMlListingLimit } from "../utils/sellerPlan.js";
 import * as imagesService from "../images/imagesService.js";
 
+// Mismo modo de "costo real" que ya existe del lado de ecommerce (productsService.js) — a
+// ciertas cuentas puntuales se les muestra el costo sin el margen de plataforma. Acá solo
+// afecta lo que se MUESTRA al publicar/calcular, no lo que se cobra de deuda en una venta real
+// (mlWebhookController.js sigue usando siempre el costo con margen, para todos por igual).
+async function isRawCostMode(sellerId) {
+  const { rows } = await pool.query("SELECT raw_cost_mode FROM sellers WHERE id = $1", [sellerId]);
+  return rows[0]?.raw_cost_mode === true;
+}
+
+function shownCostOrRaw(costUsd, cotizacion, platformPct, planId, rawCost) {
+  if (!costUsd) return 0;
+  return rawCost ? Math.round(Number(costUsd) * cotizacion) : calcShownCost(costUsd, cotizacion, platformPct, planId);
+}
+
 // Precio mínimo al que se puede publicar en ML — mismo costo que Ventaz necesita recuperar
 // (ver mlWebhookController.js, misma fórmula). TODO: usar ventas reales del seller para el
 // tier de platformPct en vez de asumir siempre el tier base.
@@ -17,10 +31,9 @@ import * as imagesService from "../images/imagesService.js";
 export async function getPriceFloor(sellerId, productId) {
   const { rows } = await pool.query(`SELECT costo_usd FROM products WHERE id = $1 AND active = true`, [productId]);
   if (!rows[0]) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
-  const cotizacion = await getCotizacion();
+  const [cotizacion, { plan_id }, rawCost] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), isRawCostMode(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  const { plan_id } = await getSellerPlan(sellerId);
-  return calcShownCost(rows[0].costo_usd, cotizacion, platformPct, plan_id);
+  return shownCostOrRaw(rows[0].costo_usd, cotizacion, platformPct, plan_id, rawCost);
 }
 
 // Para la calculadora: buscar productos reales del catálogo por nombre y devolver ya
@@ -28,10 +41,11 @@ export async function getPriceFloor(sellerId, productId) {
 // vendedor solo tenga que cargar precio/envío/cuotas.
 export async function searchProductsForCalculator(sellerId, search) {
   if (!search || search.trim().length < 2) return [];
-  const [rows, cotizacion, { plan_id }] = await Promise.all([
+  const [rows, cotizacion, { plan_id }, rawCost] = await Promise.all([
     repo.searchProductsForListing(search.trim()),
     getCotizacion(),
     getSellerPlan(sellerId),
+    isRawCostMode(sellerId),
   ]);
   const platformPct = getSellerPlatformPct(0);
   return rows.map(p => ({
@@ -39,7 +53,7 @@ export async function searchProductsForCalculator(sellerId, search) {
     name: p.name,
     weightGrams: Number(p.weight_grams || 0),
     volumeCm3:   Number(p.volume_cm3 || 0),
-    priceFloor:  calcShownCost(p.costo_usd, cotizacion, platformPct, plan_id),
+    priceFloor:  shownCostOrRaw(p.costo_usd, cotizacion, platformPct, plan_id, rawCost),
   }));
 }
 
@@ -295,10 +309,9 @@ export async function updateComboQuantities(sellerId, comboId, products) {
 export async function getComboPriceFloor(sellerId, comboId) {
   const products = await repo.getComboProducts(comboId);
   if (!products.length) { const e = new Error("Combo no encontrado"); e.status = 404; throw e; }
-  const cotizacion = await getCotizacion();
+  const [cotizacion, { plan_id }, rawCost] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), isRawCostMode(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  const { plan_id } = await getSellerPlan(sellerId);
-  return products.reduce((sum, p) => sum + calcShownCost(p.costo_usd, cotizacion, platformPct, plan_id) * p.quantity, 0);
+  return products.reduce((sum, p) => sum + shownCostOrRaw(p.costo_usd, cotizacion, platformPct, plan_id, rawCost) * p.quantity, 0);
 }
 
 // Junta (sin repetir) todas las fotos de S3 que ya existen para cada producto del combo —
