@@ -6,27 +6,35 @@ import { calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
 import pool from "../database/db.js";
 
-async function isRawCostMode(sellerId) {
-  const { rows } = await pool.query("SELECT raw_cost_mode FROM sellers WHERE id = $1", [sellerId]);
-  return rows[0]?.raw_cost_mode === true;
+// ml_cost_markup_pct (costo × margen fijo elegido por cuenta) tiene prioridad sobre
+// raw_cost_mode (costo literal, sin ningún margen) si ambos estuvieran cargados.
+async function getCostOverrides(sellerId) {
+  const { rows } = await pool.query(
+    "SELECT raw_cost_mode, ml_cost_markup_pct FROM sellers WHERE id = $1", [sellerId]
+  );
+  return {
+    rawCost:   rows[0]?.raw_cost_mode === true,
+    markupPct: rows[0]?.ml_cost_markup_pct != null ? Number(rows[0].ml_cost_markup_pct) : null,
+  };
 }
 
-function calcPrecio1(costUsd, cotizacion, planId, rawCost) {
+function calcPrecio1(costUsd, cotizacion, planId, { rawCost, markupPct }) {
   if (!costUsd) return null;
+  if (markupPct != null) return Math.round(Number(costUsd) * cotizacion * (1 + markupPct / 100));
   return rawCost ? Math.round(Number(costUsd) * cotizacion) : calcShownCost(costUsd, cotizacion, 30, planId);
 }
 
 export async function getProduct(pageId, sellerId, productId) {
-  const [row, cotizacion, { plan_id }, rawCost] = await Promise.all([
+  const [row, cotizacion, { plan_id }, overrides] = await Promise.all([
     productsRepository.findById(pageId, sellerId, productId),
     getCotizacion(),
     getSellerPlan(sellerId),
-    isRawCostMode(sellerId),
+    getCostOverrides(sellerId),
   ]);
   if (!row) throw { status: 404, message: "Producto no encontrado" };
   return {
     ...row,
-    precio_1:            calcPrecio1(row.costo_usd, cotizacion, plan_id, rawCost),
+    precio_1:            calcPrecio1(row.costo_usd, cotizacion, plan_id, overrides),
     platform_margin_pct: 30,
     custom_price:        row.custom_price ? Number(row.custom_price) : null,
     system_images:       await signKeys(row.system_images || []),
@@ -38,16 +46,16 @@ export async function getProducts(pageId, sellerId, filters) {
   const limit  = Math.min(Number(filters.limit) || 20, 500);
   const offset = Number(filters.offset) || 0;
 
-  const [{ rows, total }, cotizacion, { plan_id }, rawCost] = await Promise.all([
+  const [{ rows, total }, cotizacion, { plan_id }, overrides] = await Promise.all([
     productsRepository.findAll({ pageId, sellerId, ...filters, limit, offset }),
     getCotizacion(),
     getSellerPlan(sellerId),
-    isRawCostMode(sellerId),
+    getCostOverrides(sellerId),
   ]);
 
   const products = await Promise.all(rows.map(async p => ({
     ...p,
-    precio_1:            calcPrecio1(p.costo_usd, cotizacion, plan_id, rawCost),
+    precio_1:            calcPrecio1(p.costo_usd, cotizacion, plan_id, overrides),
     platform_margin_pct: 30,
     custom_price:        p.custom_price ? Number(p.custom_price) : null,
     system_images:       await signKeys(p.system_images || []),
