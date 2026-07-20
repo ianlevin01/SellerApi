@@ -8,18 +8,21 @@ import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan, getPlanMlListingLimit } from "../utils/sellerPlan.js";
 import * as imagesService from "../images/imagesService.js";
 
-// Mismo modo de "costo real" que ya existe del lado de ecommerce (productsService.js) — a
-// ciertas cuentas puntuales se les muestra el costo sin el margen de plataforma. Acá solo
-// afecta lo que se MUESTRA al publicar/calcular, no lo que se cobra de deuda en una venta real
-// (mlWebhookController.js sigue usando siempre el costo con margen, para todos por igual).
-async function isRawCostMode(sellerId) {
-  const { rows } = await pool.query("SELECT raw_cost_mode FROM sellers WHERE id = $1", [sellerId]);
-  return rows[0]?.raw_cost_mode === true;
+// Override puntual de costo para cuentas específicas de ML — a diferencia del "costo real"
+// (raw_cost_mode) de ecommerce, acá se muestra el costo con un margen fijo elegido por cuenta
+// (ej. costo + 10%) en vez del margen por tramos normal. Null = comportamiento de siempre.
+// Solo afecta lo que se MUESTRA al publicar/calcular, no lo que se cobra de deuda en una venta
+// real (mlWebhookController.js sigue usando siempre el margen normal, para todos por igual).
+async function getMlCostMarkupPct(sellerId) {
+  const { rows } = await pool.query("SELECT ml_cost_markup_pct FROM sellers WHERE id = $1", [sellerId]);
+  const pct = rows[0]?.ml_cost_markup_pct;
+  return pct === null || pct === undefined ? null : Number(pct);
 }
 
-function shownCostOrRaw(costUsd, cotizacion, platformPct, planId, rawCost) {
+function shownCostWithOverride(costUsd, cotizacion, platformPct, planId, overridePct) {
   if (!costUsd) return 0;
-  return rawCost ? Math.round(Number(costUsd) * cotizacion) : calcShownCost(costUsd, cotizacion, platformPct, planId);
+  if (overridePct != null) return Math.round(Number(costUsd) * cotizacion * (1 + overridePct / 100));
+  return calcShownCost(costUsd, cotizacion, platformPct, planId);
 }
 
 // Precio mínimo al que se puede publicar en ML — mismo costo que Ventaz necesita recuperar
@@ -31,9 +34,9 @@ function shownCostOrRaw(costUsd, cotizacion, platformPct, planId, rawCost) {
 export async function getPriceFloor(sellerId, productId) {
   const { rows } = await pool.query(`SELECT costo_usd FROM products WHERE id = $1 AND active = true`, [productId]);
   if (!rows[0]) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
-  const [cotizacion, { plan_id }, rawCost] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), isRawCostMode(sellerId)]);
+  const [cotizacion, { plan_id }, markupPct] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  return shownCostOrRaw(rows[0].costo_usd, cotizacion, platformPct, plan_id, rawCost);
+  return shownCostWithOverride(rows[0].costo_usd, cotizacion, platformPct, plan_id, markupPct);
 }
 
 // Para la calculadora: buscar productos reales del catálogo por nombre y devolver ya
@@ -41,11 +44,11 @@ export async function getPriceFloor(sellerId, productId) {
 // vendedor solo tenga que cargar precio/envío/cuotas.
 export async function searchProductsForCalculator(sellerId, search) {
   if (!search || search.trim().length < 2) return [];
-  const [rows, cotizacion, { plan_id }, rawCost] = await Promise.all([
+  const [rows, cotizacion, { plan_id }, markupPct] = await Promise.all([
     repo.searchProductsForListing(search.trim()),
     getCotizacion(),
     getSellerPlan(sellerId),
-    isRawCostMode(sellerId),
+    getMlCostMarkupPct(sellerId),
   ]);
   const platformPct = getSellerPlatformPct(0);
   return rows.map(p => ({
@@ -53,7 +56,7 @@ export async function searchProductsForCalculator(sellerId, search) {
     name: p.name,
     weightGrams: Number(p.weight_grams || 0),
     volumeCm3:   Number(p.volume_cm3 || 0),
-    priceFloor:  shownCostOrRaw(p.costo_usd, cotizacion, platformPct, plan_id, rawCost),
+    priceFloor:  shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, markupPct),
   }));
 }
 
@@ -309,9 +312,9 @@ export async function updateComboQuantities(sellerId, comboId, products) {
 export async function getComboPriceFloor(sellerId, comboId) {
   const products = await repo.getComboProducts(comboId);
   if (!products.length) { const e = new Error("Combo no encontrado"); e.status = 404; throw e; }
-  const [cotizacion, { plan_id }, rawCost] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), isRawCostMode(sellerId)]);
+  const [cotizacion, { plan_id }, markupPct] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  return products.reduce((sum, p) => sum + shownCostOrRaw(p.costo_usd, cotizacion, platformPct, plan_id, rawCost) * p.quantity, 0);
+  return products.reduce((sum, p) => sum + shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, markupPct) * p.quantity, 0);
 }
 
 // Junta (sin repetir) todas las fotos de S3 que ya existen para cada producto del combo —
