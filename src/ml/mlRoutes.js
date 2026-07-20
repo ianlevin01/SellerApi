@@ -31,6 +31,7 @@ router.get   ("/summary",                       ctrl.getSummary);
 router.get   ("/categories/suggest",            ctrl.suggestCategory);
 router.get   ("/categories/:id/attributes",     ctrl.getCategoryAttributes);
 router.post  ("/pictures/upload", upload10mb.single("image"), ctrl.uploadPicture);
+router.post  ("/pictures/generate",             ctrl.generatePicture);
 router.get   ("/products/search",                 ctrl.searchProducts);
 router.get   ("/products/:productId/price-floor", ctrl.getPriceFloor);
 router.post  ("/suggest/title",                 ctrl.suggestTitle);

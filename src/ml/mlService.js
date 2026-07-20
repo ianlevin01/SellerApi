@@ -115,17 +115,35 @@ async function apiWrite(method, path, token, body) {
 
 // Sugerencia de categoría de ML a partir de un título — la categoría interna de Ventaz
 // no corresponde a la taxonomía de ML, hay que mapear.
+// Trae también la miga de pan completa de cada categoría sugerida (igual que muestra la
+// propia Mercado Libre al elegir categoría) — sin esto, categorías con nombres parecidos
+// pero de rubros distintos son imposibles de distinguir en la lista.
 export async function suggestCategory(siteId, query) {
   const data = await apiGet(`/sites/${siteId}/domain_discovery/search?q=${encodeURIComponent(query)}`);
-  return data.map(d => ({ categoryId: d.category_id, categoryName: d.category_name }));
+  const suggestions = data.map(d => ({ categoryId: d.category_id, categoryName: d.category_name }));
+  const paths = await Promise.all(suggestions.map(s => getCategoryPath(s.categoryId).catch(() => null)));
+  return suggestions.map((s, i) => ({ ...s, path: paths[i] }));
 }
+
+export async function getCategoryPath(categoryId) {
+  const data = await apiGet(`/categories/${categoryId}`);
+  return (data.path_from_root || []).map(p => p.name).join(" > ");
+}
+
+// EMPTY_GTIN_REASON y GTIN se manejan solos (ver mlListingService.fillMissingGtinExemption) —
+// nunca se le muestran al vendedor. El resto de los atributos "hidden"/"read_only" (código
+// hazmat, características químicas, campos que calcula ML solo, etc.) tampoco son para que
+// el vendedor complete a mano — Mercado Libre los marca así en su propia API.
+const NEVER_SHOW_ATTRS = new Set(["GTIN", "EMPTY_GTIN_REASON"]);
 
 export async function getCategoryAttributes(categoryId) {
   const data = await apiGet(`/categories/${categoryId}/attributes`);
-  return data.map(a => ({
-    id: a.id, name: a.name, required: a.tags?.required || false,
-    valueType: a.value_type, values: a.values,
-  }));
+  return data
+    .filter(a => !NEVER_SHOW_ATTRS.has(a.id) && !a.tags?.hidden && !a.tags?.read_only)
+    .map(a => ({
+      id: a.id, name: a.name, required: a.tags?.required || false,
+      valueType: a.value_type, values: a.values,
+    }));
 }
 
 // Algunas categorías ya usan el modelo nuevo de ML ("User Products"/variaciones, pide

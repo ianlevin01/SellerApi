@@ -347,6 +347,24 @@ export async function suggestAttributes(req, res) {
   }
 }
 
+// POST /seller/ml/pictures/generate  { productName, description }
+// Genera una foto con IA y la sube igual que una imagen subida a mano (mismo ref híbrido
+// ML-directo/S3 que ya usa uploadPicture), lista para usar en el wizard de publicar.
+export async function generatePicture(req, res) {
+  try {
+    const { productName, description } = req.body;
+    if (!productName) return res.status(400).json({ message: "Falta productName" });
+    const buffer = await aiSvc.generateProductImage(productName, description);
+    const result = await listingSvc.uploadPictureForSeller(req.seller.id, {
+      buffer, originalname: `ia-${Date.now()}.png`, mimetype: "image/png",
+    });
+    return res.json({ ref: result.ref, previewUrl: `data:image/png;base64,${buffer.toString("base64")}` });
+  } catch (err) {
+    console.error("[ml] generatePicture:", err.message);
+    return res.status(500).json({ message: err.message || "No se pudo generar la imagen" });
+  }
+}
+
 // POST /seller/ml/products/:productId/publish
 export async function publishProduct(req, res) {
   try {

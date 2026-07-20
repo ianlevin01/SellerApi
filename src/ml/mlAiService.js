@@ -103,3 +103,31 @@ Respondé SOLO JSON: { "valores": { "<id_del_atributo>": "<valor>", ... } }`,
     return {};
   }
 }
+
+// Genera una foto de producto de estudio (fondo liso, sin marcas de agua) para usar como
+// imagen de la publicación — pensada específicamente para Mercado Libre, no para la ficha de
+// producto de la tienda propia (que puede usar fotos más "lifestyle").
+export async function generateProductImage(productName, description) {
+  const ai = getClient();
+  const prompt = `Fotografía de producto profesional de estudio para publicar en Mercado Libre (marketplace de e-commerce de Argentina).
+Producto: "${productName}".${description ? ` Detalles: ${description}.` : ""}
+
+Requisitos estrictos de la foto:
+- Fondo blanco o gris muy claro, completamente liso, sin sombras duras ni decorados.
+- El producto centrado en el cuadro, ocupando la mayor parte de la imagen, bien enfocado y nítido.
+- Iluminación uniforme tipo estudio fotográfico, sin reflejos exagerados.
+- Ángulo que muestre el producto completo y sus detalles principales.
+- SIN texto, SIN logos superpuestos, SIN marcas de agua, SIN manos ni personas.
+- Estilo fotorrealista (no ilustración, no render 3D estilizado, no dibujo) — como una foto de catálogo real.`;
+
+  const res = await ai.images.generate({
+    model:  "gpt-image-1",
+    prompt,
+    size:   "1024x1024",
+    n:      1,
+  });
+
+  const b64 = res.data[0]?.b64_json;
+  if (!b64) throw new Error("La IA no devolvió ninguna imagen");
+  return Buffer.from(b64, "base64");
+}
