@@ -4,6 +4,7 @@ import * as walletSvc from "./mlWalletService.js";
 import * as listingSvc from "./mlListingService.js";
 import { getValidToken } from "./mlTokenService.js";
 import { getSellerPlan, getPlanMlGraceHours } from "../utils/sellerPlan.js";
+import * as aiSvc from "./mlAiService.js";
 
 const SELLER_APP = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 const REDIRECT_BASE = `${SELLER_APP}/mercado-libre`;
@@ -302,6 +303,47 @@ export async function getPriceFloor(req, res) {
   } catch (err) {
     console.error("[ml] getPriceFloor:", err.message);
     return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// ── Sugerencias con IA para el wizard de publicar ────────────────────────────
+
+// POST /seller/ml/suggest/title  { productName, categoryName }
+export async function suggestTitle(req, res) {
+  try {
+    const { productName, categoryName } = req.body;
+    if (!productName) return res.status(400).json({ message: "Falta productName" });
+    const title = await aiSvc.suggestTitle(productName, categoryName);
+    return res.json({ title });
+  } catch (err) {
+    console.error("[ml] suggestTitle:", err.message);
+    return res.status(500).json({ message: "No se pudo generar el título" });
+  }
+}
+
+// POST /seller/ml/suggest/description  { productName, description }
+export async function suggestDescription(req, res) {
+  try {
+    const { productName, description } = req.body;
+    if (!productName) return res.status(400).json({ message: "Falta productName" });
+    const description_ = await aiSvc.suggestDescription(productName, description);
+    return res.json({ description: description_ });
+  } catch (err) {
+    console.error("[ml] suggestDescription:", err.message);
+    return res.status(500).json({ message: "No se pudo generar la descripción" });
+  }
+}
+
+// POST /seller/ml/suggest/attributes  { productName, description, categoryName, attrDefs }
+export async function suggestAttributes(req, res) {
+  try {
+    const { productName, description, categoryName, attrDefs } = req.body;
+    if (!productName || !Array.isArray(attrDefs)) return res.status(400).json({ message: "Faltan datos" });
+    const values = await aiSvc.suggestAttributeValues(productName, description, categoryName, attrDefs);
+    return res.json({ values });
+  } catch (err) {
+    console.error("[ml] suggestAttributes:", err.message);
+    return res.status(500).json({ message: "No se pudieron sugerir las características" });
   }
 }
 
