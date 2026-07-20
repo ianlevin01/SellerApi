@@ -146,6 +146,27 @@ async function fillMissingGtinExemption(categoryId, attributes) {
   return [...attributes, { id: "EMPTY_GTIN_REASON", value_name: preferred.name }];
 }
 
+// Algunas categorías exigen que el propio vendedor declare las dimensiones del paquete
+// (SELLER_PACKAGE_HEIGHT/WIDTH/LENGTH/WEIGHT) como atributos — separado del campo `dimensions`
+// que ya mandamos para el cálculo de envío. Ya tenemos ese mismo dato (peso real + volumen
+// aproximado a un cubo, igual que estimateShippingDimensions), así que se completa solo en vez
+// de pedírselo al vendedor de nuevo.
+function fillMissingPackageDimensions(attributes, weightGrams, volumeCm3) {
+  const hasAttr = id => attributes.some(a => a.id === id);
+  const needed = ["SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT"]
+    .filter(id => !hasAttr(id));
+  if (needed.length === 0 || !weightGrams || !volumeCm3) return attributes;
+
+  const side = Math.max(1, Math.round(Math.cbrt(volumeCm3)));
+  const values = {
+    SELLER_PACKAGE_HEIGHT: `${side} cm`,
+    SELLER_PACKAGE_WIDTH:  `${side} cm`,
+    SELLER_PACKAGE_LENGTH: `${side} cm`,
+    SELLER_PACKAGE_WEIGHT: `${Math.round(weightGrams)} g`,
+  };
+  return [...attributes, ...needed.map(id => ({ id, value_name: values[id] }))];
+}
+
 async function createMlItem(token, payload) {
   try {
     return await svc.createItem(token, payload);
@@ -195,7 +216,8 @@ export async function publishProduct(sellerId, productId, config) {
     throw e;
   }
 
-  const attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  attributes = fillMissingPackageDimensions(attributes, product.weight_grams, product.volume_cm3);
 
   const item = await createMlItem(token, {
     title:       config.title?.trim() || product.name,
@@ -330,7 +352,8 @@ export async function publishCombo(sellerId, comboId, config) {
   const totalVolume = products.reduce((sum, p) => sum + Number(p.volume_cm3 || 0) * p.quantity, 0);
   const availableStock = Math.min(...products.map(p => Math.floor(Number(p.available_stock) / p.quantity)));
   const comboName = await repo.getComboName(comboId);
-  const attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  attributes = fillMissingPackageDimensions(attributes, totalWeight, totalVolume);
 
   const item = await createMlItem(token, {
     title:       config.title?.trim() || comboName,

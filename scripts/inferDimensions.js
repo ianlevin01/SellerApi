@@ -8,16 +8,15 @@
  *   node scripts/inferDimensions.js --limit 20 # limita la cantidad a procesar
  */
 
+import "dotenv/config"; // debe ser el primer import — s3Client.js lee process.env al cargarse
 import { readFile, writeFile, access } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { config } from "dotenv";
 import OpenAI from "openai";
 import pool from "../src/database/db.js";
 import { signKey } from "../src/utils/s3Client.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-config({ path: join(__dirname, "../.env") });
 
 const PROGRESS_FILE = join(__dirname, "infer_progress.json");
 const DELAY_MS = 250; // ms entre llamadas a la API
@@ -31,19 +30,40 @@ const LIMIT = limitIdx !== -1 ? parseInt(args[limitIdx + 1]) : null;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ── Shrinkage ────────────────────────────────────────────────────────────────
+// Encoge la estimación cruda de la IA hacia un "target" (promedio del catálogo, ajustado
+// levemente por el precio del producto) en espacio logarítmico. Cuánto se acerca depende de
+// la confianza que reportó la propia IA: si está muy segura, casi no se toca su predicción;
+// si está insegura, se acerca fuerte al target.
 const MEAN_WEIGHT = 500;  // g
 const MEAN_VOLUME = 400;  // cm³
 
-const ALPHA = { high: 0.1, medium: 0.3, low: 0.55 };
+// Más peso a la confianza en ambos sentidos: "high" casi no encoge, "low" encoge mucho.
+const ALPHA = { high: 0.08, medium: 0.35, low: 0.75 };
 
-function shrink(predicted, mean, confidence) {
-  const alpha = ALPHA[confidence] ?? 0.3;
-  return Math.round(Math.exp((1 - alpha) * Math.log(predicted) + alpha * Math.log(mean)));
+// El precio es una señal débil: un producto muy barato difícilmente sea grande/pesado y
+// viceversa, pero no debe pesar tanto como la confianza de la IA — por eso PRICE_WEIGHT es chico.
+const MEDIAN_COST_USD = 9;    // mediana real del catálogo (costo_usd)
+const PRICE_EXPONENT  = 0.35; // qué tan agresivo escala tamaño con precio (suave, no lineal)
+const PRICE_WEIGHT    = 0.15; // cuánto pesa el precio al armar el target (vs. el promedio plano)
+
+// target = mean * (costoUsd/medianCost)^PRICE_EXPONENT, atenuado por PRICE_WEIGHT en log-espacio
+// (equivale a: mean * factorPrecio^PRICE_WEIGHT)
+function priceAdjustedTarget(mean, costoUsd) {
+  if (!costoUsd || costoUsd <= 0) return mean;
+  const factor = Math.pow(costoUsd / MEDIAN_COST_USD, PRICE_EXPONENT);
+  return mean * Math.pow(factor, PRICE_WEIGHT);
 }
 
-function applyBoundsAndShrink(rawWeight, rawVolume, confidence) {
-  const weight = Math.min(Math.max(shrink(rawWeight, MEAN_WEIGHT, confidence), 50), 25000);
-  const volume = Math.min(Math.max(shrink(rawVolume, MEAN_VOLUME, confidence), 100), 80000);
+function shrink(predicted, target, confidence) {
+  const alpha = ALPHA[confidence] ?? 0.35;
+  return Math.round(Math.exp((1 - alpha) * Math.log(predicted) + alpha * Math.log(target)));
+}
+
+function applyBoundsAndShrink(rawWeight, rawVolume, confidence, costoUsd) {
+  const targetWeight = priceAdjustedTarget(MEAN_WEIGHT, costoUsd);
+  const targetVolume = priceAdjustedTarget(MEAN_VOLUME, costoUsd);
+  const weight = Math.min(Math.max(shrink(rawWeight, targetWeight, confidence), 50), 25000);
+  const volume = Math.min(Math.max(shrink(rawVolume, targetVolume, confidence), 100), 80000);
   return { weight, volume };
 }
 
@@ -67,7 +87,7 @@ async function getProducts() {
     : "WHERE p.active = true AND p.weight_grams IS NULL";
   const limitClause = LIMIT ? `LIMIT ${LIMIT}` : "";
   const { rows } = await pool.query(`
-    SELECT p.id, p.name, p.description, c.name AS category
+    SELECT p.id, p.name, p.description, p.costo_usd, c.name AS category
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     ${where}
@@ -155,14 +175,28 @@ async function main() {
     try {
       result = await inferWithOpenAI(product, validUrls);
     } catch (err) {
-      // retry once
-      await sleep(1000);
-      try {
-        result = await inferWithOpenAI(product, validUrls);
-      } catch (err2) {
-        console.error(`  ✗ ${product.name}: ${err2.message}`);
-        errors++;
-        continue;
+      if (/unsupported image/i.test(err.message) && validUrls.length > 0) {
+        // Alguna foto está en un formato que GPT no acepta (avif, o un .jpg mal
+        // etiquetado que en realidad no es jpeg) — reintentar sin fotos, solo con
+        // nombre/descripción, en vez de perder el producto entero.
+        console.warn(`  ⚠ ${product.name}: foto rechazada por formato, reintentando sin imágenes`);
+        try {
+          result = await inferWithOpenAI(product, []);
+        } catch (err2) {
+          console.error(`  ✗ ${product.name}: ${err2.message}`);
+          errors++;
+          continue;
+        }
+      } else {
+        // retry once
+        await sleep(1000);
+        try {
+          result = await inferWithOpenAI(product, validUrls);
+        } catch (err2) {
+          console.error(`  ✗ ${product.name}: ${err2.message}`);
+          errors++;
+          continue;
+        }
       }
     }
 
@@ -176,7 +210,7 @@ async function main() {
     }
 
     const conf = result.confidence || "medium";
-    const { weight, volume } = applyBoundsAndShrink(rawWeight, rawVolume, conf);
+    const { weight, volume } = applyBoundsAndShrink(rawWeight, rawVolume, conf, Number(product.costo_usd));
 
     console.log(
       `  [${conf}] ${product.name.slice(0, 48).padEnd(48)} ` +
