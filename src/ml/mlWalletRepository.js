@@ -109,6 +109,20 @@ export async function getPendingOrdersForSeller(sellerId) {
   return rows;
 }
 
+// Solo la parte que ya superó la ventana de gracia del plan — usada por el botón de "pagar
+// deuda obligatoria" (a diferencia de "pagar deuda ahora", que cobra todo junto).
+export async function getBlockedOrdersForSeller(sellerId, graceHours) {
+  const { rows } = await pool.query(
+    `SELECT id AS order_id, ml_order_id, ml_cost_amount, created_at
+     FROM web_orders
+     WHERE seller_id = $1 AND channel = 'mercadolibre' AND ml_charge_status = 'pending'
+       AND created_at <= now() - ($2 || ' hours')::interval
+     ORDER BY created_at`,
+    [sellerId, graceHours]
+  );
+  return rows;
+}
+
 export async function markOrdersChargeStatus(orderIds, status) {
   if (orderIds.length === 0) return;
   await pool.query(

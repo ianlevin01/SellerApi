@@ -173,13 +173,17 @@ export async function updateComboProducts(comboId, products) {
 // (catálogo compartido) o del mismo vendedor publicando el mismo producto más de una vez con
 // distinto precio/cuotas. ml_item_id (no product_id) es lo único que identifica una publicación.
 // Una publicación representa un producto (productId) O un combo (comboId), nunca los dos.
-export async function createListing(sellerId, { productId, comboId, mlItemId, categoryId, status, permalink, price, mlCategoryId, attributes, shippingFree }) {
+// ml_account_id/ml_account_nickname son una FOTO de qué cuenta de ML estaba conectada al
+// momento de publicar — necesario porque ml_connections guarda una sola cuenta por vendedor
+// (se pisa si reconecta otra distinta), así que sin esta foto no habría forma de saber
+// después con qué cuenta se publicó cada cosa si el vendedor alternó entre varias.
+export async function createListing(sellerId, { productId, comboId, mlItemId, categoryId, status, permalink, price, mlCategoryId, attributes, shippingFree, mlAccountId, mlAccountNickname }) {
   const { rows } = await pool.query(
-    `INSERT INTO ml_listings (seller_id, product_id, ml_combo_id, ml_item_id, category_id, status, permalink, price, ml_category_id, attributes, shipping_free)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `INSERT INTO ml_listings (seller_id, product_id, ml_combo_id, ml_item_id, category_id, status, permalink, price, ml_category_id, attributes, shipping_free, ml_account_id, ml_account_nickname)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING *`,
     [sellerId, productId || null, comboId || null, mlItemId, categoryId || null, status || "active", permalink || null,
-     price ?? null, mlCategoryId || null, JSON.stringify(attributes || []), !!shippingFree]
+     price ?? null, mlCategoryId || null, JSON.stringify(attributes || []), !!shippingFree, mlAccountId || null, mlAccountNickname || null]
   );
   return rows[0];
 }

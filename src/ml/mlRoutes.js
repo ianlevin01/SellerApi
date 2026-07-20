@@ -24,6 +24,7 @@ router.post  ("/wallet/card",       ctrl.saveCard);
 router.post  ("/wallet/topup",      ctrl.topup);
 router.get   ("/wallet/history",    ctrl.getWalletHistory);
 router.post  ("/wallet/pay-debt",       ctrl.payDebt);
+router.post  ("/wallet/pay-blocked-debt", ctrl.payBlockedDebt);
 
 router.get   ("/listings",                      ctrl.getListings);
 router.get   ("/summary",                       ctrl.getSummary);

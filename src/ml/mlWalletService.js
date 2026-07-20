@@ -19,10 +19,9 @@ export async function getBlockedDebt(sellerId) {
   return repo.getBlockedDebt(sellerId, graceHours);
 }
 
-// Botón "Pagar deuda ahora" — cobra TODA la deuda pendiente (madura y no madura) de una vez,
-// desde la tarjeta guardada, y reactiva lo que estuviera pausado por cobro fallido.
-export async function payPendingDebtNow(sellerId) {
-  const orders = await repo.getPendingOrdersForSeller(sellerId);
+// Compartido por "pagar deuda ahora" y "pagar deuda obligatoria" — solo cambia qué conjunto
+// de órdenes se le pasa.
+async function chargeOrdersNow(sellerId, orders, description) {
   if (orders.length === 0) {
     const e = new Error("No tenés deuda pendiente para pagar");
     e.status = 400;
@@ -34,7 +33,7 @@ export async function payPendingDebtNow(sellerId) {
 
   const result = await debitOrCharge(sellerId, total, {
     mlOrderId: orders.map(o => o.ml_order_id).join(","),
-    description: `Pago manual de deuda de Mercado Libre (${orders.length} venta(s))`,
+    description,
   });
 
   await repo.insertChargeAttempt(sellerId, {
@@ -51,6 +50,22 @@ export async function payPendingDebtNow(sellerId) {
   await repo.markOrdersChargeStatus(orderIds, "charged");
   await listingSvc.reactivateListingsAfterChargeSuccess(sellerId).catch(() => {});
   return { ok: true, amount: total };
+}
+
+// Botón "Pagar deuda ahora" — cobra TODA la deuda pendiente (madura y no madura) de una vez,
+// desde la tarjeta guardada, y reactiva lo que estuviera pausado por cobro fallido.
+export async function payPendingDebtNow(sellerId) {
+  const orders = await repo.getPendingOrdersForSeller(sellerId);
+  return chargeOrdersNow(sellerId, orders, `Pago manual de deuda de Mercado Libre (${orders.length} venta(s))`);
+}
+
+// Botón "Pagar deuda obligatoria" — cobra SOLO la parte ya vencida (fuera del período de
+// gracia del plan), dejando la que todavía está en gracia sin tocar.
+export async function payBlockedDebtNow(sellerId) {
+  const { plan_id } = await getSellerPlan(sellerId);
+  const graceHours = getPlanMlGraceHours(plan_id);
+  const orders = await repo.getBlockedOrdersForSeller(sellerId, graceHours);
+  return chargeOrdersNow(sellerId, orders, `Pago de deuda obligatoria de Mercado Libre (${orders.length} venta(s))`);
 }
 
 export async function getCardStatus(sellerId) {

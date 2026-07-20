@@ -113,6 +113,17 @@ export async function payDebt(req, res) {
   }
 }
 
+// POST /seller/ml/wallet/pay-blocked-debt — cobra solo la parte vencida (fuera de gracia)
+export async function payBlockedDebt(req, res) {
+  try {
+    const result = await walletSvc.payBlockedDebtNow(req.seller.id);
+    return res.json(result);
+  } catch (err) {
+    console.error("[ml] payBlockedDebt:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
 
 // POST /seller/ml/wallet/card  { card_token }
 export async function saveCard(req, res) {

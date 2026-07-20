@@ -190,6 +190,7 @@ async function createMlItem(token, payload) {
 export async function publishProduct(sellerId, productId, config) {
   const token = await getValidToken(sellerId);
   if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
 
   const product = await getProductForListing(productId);
   if (!product) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
@@ -235,6 +236,7 @@ export async function publishProduct(sellerId, productId, config) {
     productId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: config.shippingFree,
+    mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
   });
 }
 
@@ -321,6 +323,7 @@ async function getImageKeysForCombo(sellerId, products) {
 export async function publishCombo(sellerId, comboId, config) {
   const token = await getValidToken(sellerId);
   if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
 
   const owned = await repo.isComboOwned(comboId, sellerId);
   if (!owned) { const e = new Error("Combo no encontrado"); e.status = 404; throw e; }
@@ -371,6 +374,7 @@ export async function publishCombo(sellerId, comboId, config) {
     comboId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: config.shippingFree,
+    mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
   });
 }
 
