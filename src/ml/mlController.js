@@ -6,7 +6,7 @@ import { getValidToken } from "./mlTokenService.js";
 import { getSellerPlan, getPlanMlGraceHours } from "../utils/sellerPlan.js";
 
 const SELLER_APP = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
-const REDIRECT_BASE = `${SELLER_APP}/integrations`;
+const REDIRECT_BASE = `${SELLER_APP}/mercado-libre`;
 
 // GET /seller/ml/connect
 export async function getConnectUrl(req, res) {
