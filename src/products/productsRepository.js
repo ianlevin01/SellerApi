@@ -5,7 +5,7 @@ import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
 // SQL fragment: "p.negocio_id = ANY(ARRAY['uuid1','uuid2']::uuid[])"
 const NEGOCIO_FILTER = `p.negocio_id = ANY(ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[])`;
 
-export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, limit = 20, offset = 0 }) {
+export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, minStock, limit = 20, offset = 0 }) {
   let query = `
     SELECT
       p.id, p.code, p.name, p.description, p.active,
@@ -109,6 +109,13 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
         ELSE GREATEST(0, COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) < 10
       END
     )`;
+  }
+  if (minStock != null) {
+    // Repite la misma expresión de available_stock del SELECT — no se puede referenciar
+    // el alias directamente en el WHERE de la misma query.
+    query += ` AND GREATEST(0, COALESCE((SELECT SUM(s3.quantity) FROM stock s3 WHERE s3.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) > $${idx}`;
+    params.push(minStock);
+    idx++;
   }
 
   const countQuery = `SELECT COUNT(*) FROM (${query}) AS sub`;

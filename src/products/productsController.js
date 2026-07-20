@@ -18,12 +18,13 @@ export async function getProduct(req, res) {
 
 export async function getProducts(req, res) {
   try {
-    const { search, category_id, only_mine, limit, offset } = req.query;
+    const { search, category_id, only_mine, min_stock, limit, offset } = req.query;
     // Legacy route: uses null pageId (no page filter — shows all system products with seller image data)
     const result = await productsService.getProducts(null, req.seller.id, {
       search,
       categoryId: category_id,
       onlyMine:   only_mine === "true",
+      minStock:   min_stock ? Number(min_stock) : null,
       limit:      limit  ? Number(limit)  : 200,
       offset:     offset ? Number(offset) : 0,
     });

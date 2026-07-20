@@ -125,13 +125,39 @@ Respondé SOLO JSON: { "valores": { "<id_del_atributo>": "<valor>", ... } }`,
   }
 }
 
+// La API de generación de imágenes (images.generate) no acepta fotos de referencia — es
+// texto→imagen puro. Para que el resultado se parezca al producto real (no a un genérico
+// inventado a partir del nombre), primero se le pide al modelo de visión que describa en
+// palabras lo que ve en las fotos del catálogo, y esa descripción visual es la que después
+// alimenta el prompt de generación.
+export async function describeProductForImageGen(productName, imageUrls = []) {
+  if (!imageUrls.length) return "";
+  const ai = getClient();
+  const res = await ai.chat.completions.create({
+    model:       "gpt-4o-mini",
+    max_tokens:  200,
+    temperature: 0.2,
+    messages: [
+      {
+        role:    "system",
+        content: `Describí en un párrafo corto el aspecto visual exacto del producto de estas fotos: color(es) precisos, forma, material aparente, diseño/estampado, y cualquier detalle distintivo (mango, textura, patrón, etc.). Es para que otro modelo de IA genere una foto de estudio del mismo producto sin verlo — sé lo más concreto y literal posible, sin opiniones ni marketing. Respondé SOLO la descripción visual.`,
+      },
+      {
+        role:    "user",
+        content: buildUserContent(`Producto: "${productName}"`, imageUrls),
+      },
+    ],
+  });
+  return res.choices[0].message.content.trim();
+}
+
 // Genera una foto de producto de estudio (fondo liso, sin marcas de agua) para usar como
 // imagen de la publicación — pensada específicamente para Mercado Libre, no para la ficha de
 // producto de la tienda propia (que puede usar fotos más "lifestyle").
 export async function generateProductImage(productName, description) {
   const ai = getClient();
   const prompt = `Fotografía de producto profesional de estudio para publicar en Mercado Libre (marketplace de e-commerce de Argentina).
-Producto: "${productName}".${description ? ` Detalles: ${description}.` : ""}
+Producto: "${productName}".${description ? ` Aspecto real del producto (respetalo estrictamente, no inventes otro color/forma/diseño): ${description}.` : ""}
 
 Requisitos estrictos de la foto:
 - Fondo blanco o gris muy claro, completamente liso, sin sombras duras ni decorados.
