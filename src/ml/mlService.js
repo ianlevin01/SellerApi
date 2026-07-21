@@ -136,6 +136,14 @@ export async function getCategoryPath(categoryId) {
 // el vendedor complete a mano — Mercado Libre los marca así en su propia API.
 const NEVER_SHOW_ATTRS = new Set(["GTIN", "EMPTY_GTIN_REASON"]);
 
+// Los atributos "number_unit" (LENGTH, WEIGHT, MIN_RECOMMENDED_AGE, etc.) cada uno tiene su
+// propia unidad válida (cm, g, años...) — ML la manda en allowed_units/default_unit. Sin esto,
+// el front no tiene forma de saber que MIN_RECOMMENDED_AGE se mide en años y no en cm.
+function normalizeUnit(u) {
+  if (!u) return null;
+  return typeof u === "string" ? u : (u.name || u.id || null);
+}
+
 export async function getCategoryAttributes(categoryId) {
   const data = await apiGet(`/categories/${categoryId}/attributes`);
   return data
@@ -143,6 +151,7 @@ export async function getCategoryAttributes(categoryId) {
     .map(a => ({
       id: a.id, name: a.name, required: a.tags?.required || false,
       valueType: a.value_type, values: a.values,
+      defaultUnit: normalizeUnit(a.default_unit) || normalizeUnit(a.allowed_units?.[0]),
     }));
 }
 

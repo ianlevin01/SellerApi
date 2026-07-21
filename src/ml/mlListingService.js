@@ -191,6 +191,19 @@ function fillMissingPackageDimensions(attributes, weightGrams, volumeCm3) {
   return [...attributes, ...needed.map(id => ({ id, value_name: values[id] }))];
 }
 
+// SALE_FORMAT = "Unidad" activa un requisito condicional de UNITS_PER_PACK que la categoría
+// no marca como "required" de entrada (por eso queda en "características secundarias", no en
+// las obligatorias) — si no se completa, ML rechaza la publicación con "Completá este campo
+// porque completaste 'Unidad' en el campo 'Formato de venta'". Si vende por unidad, el
+// paquete trae 1 unidad — se completa solo, mismo criterio que fillMissingGtinExemption.
+function fillMissingUnitsPerPack(attributes) {
+  const hasAttr = id => attributes.some(a => a.id === id);
+  if (hasAttr("UNITS_PER_PACK")) return attributes;
+  const saleFormat = attributes.find(a => a.id === "SALE_FORMAT");
+  if (!saleFormat || !/^unidad$/i.test(String(saleFormat.value_name || "").trim())) return attributes;
+  return [...attributes, { id: "UNITS_PER_PACK", value_name: "1" }];
+}
+
 // shippingFreeUsed viaja en el resultado porque el reintento de más abajo puede terminar
 // publicando con un envío gratis distinto al que pidió el vendedor — sin esto, lo que
 // guardamos en nuestra base quedaría desincronizado de lo que realmente tiene la publicación
@@ -255,6 +268,7 @@ export async function publishProduct(sellerId, productId, config) {
 
   let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
   attributes = fillMissingPackageDimensions(attributes, product.weight_grams, product.volume_cm3);
+  attributes = fillMissingUnitsPerPack(attributes);
 
   const item = await createMlItem(token, {
     title:       config.title?.trim() || product.name,
@@ -393,6 +407,7 @@ export async function publishCombo(sellerId, comboId, config) {
   const comboName = await repo.getComboName(comboId);
   let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
   attributes = fillMissingPackageDimensions(attributes, totalWeight, totalVolume);
+  attributes = fillMissingUnitsPerPack(attributes);
 
   const item = await createMlItem(token, {
     title:       config.title?.trim() || comboName,
