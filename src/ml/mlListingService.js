@@ -158,14 +158,21 @@ async function fillMissingGtinExemption(categoryId, attributes) {
 
   let categoryAttrs;
   try {
-    categoryAttrs = await svc.getCategoryAttributes(categoryId);
+    // Sin filtrar a propósito — getCategoryAttributes (la que usa el wizard) excluye
+    // EMPTY_GTIN_REASON explícitamente, así que nunca lo íbamos a encontrar ahí.
+    categoryAttrs = await svc.getRawCategoryAttributes(categoryId);
   } catch {
     return attributes; // si no se puede consultar, seguimos sin tocar nada — que ML valide como siempre
   }
   const exemptionAttr = categoryAttrs.find(a => a.id === "EMPTY_GTIN_REASON");
   if (!exemptionAttr?.values?.length) return attributes; // esta categoría no pide GTIN, o no tiene motivos configurados
 
-  const preferred = exemptionAttr.values.find(v => /gen[eé]ric|no registrad|not registered/i.test(v.name))
+  // El texto real que usa ML hoy es "El producto no tiene código registrado" — "no tiene
+  // c[oó]digo" cubre eso. Si ninguna variante matchea, mejor "Otra razón" (si existe) que caer
+  // en el primer valor de la lista, que en varias categorías es algo específico como "es una
+  // pieza artesanal" — un motivo incorrecto para casi cualquier producto del catálogo.
+  const preferred = exemptionAttr.values.find(v => /gen[eé]ric|no tiene c[oó]digo|no registrad|sin c[oó]digo|not registered/i.test(v.name))
+    || exemptionAttr.values.find(v => /otra raz[oó]n|other reason/i.test(v.name))
     || exemptionAttr.values[0];
   return [...attributes, { id: "EMPTY_GTIN_REASON", value_name: preferred.name }];
 }

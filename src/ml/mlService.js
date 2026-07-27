@@ -155,6 +155,16 @@ export async function getCategoryAttributes(categoryId) {
     }));
 }
 
+// Sin filtrar — a diferencia de getCategoryAttributes (pensada para mostrarle al vendedor en el
+// wizard), esta trae TODOS los atributos tal cual los manda ML, incluyendo GTIN/EMPTY_GTIN_REASON
+// (que la de arriba excluye a propósito). fillMissingGtinExemption necesita ver EMPTY_GTIN_REASON
+// con sus `values` para poder completarlo solo — si usara la versión filtrada nunca lo iba a
+// encontrar (siempre queda afuera por NEVER_SHOW_ATTRS), y por eso GTIN terminaba rechazando la
+// publicación igual pese a que fillMissingGtinExemption existe justo para evitar eso.
+export async function getRawCategoryAttributes(categoryId) {
+  return apiGet(`/categories/${categoryId}/attributes`);
+}
+
 // Algunas categorías ya usan el modelo nuevo de ML ("User Products"/variaciones, pide
 // `family_name` y rechaza `title`) y otras todavía usan el modelo clásico (pide `title` y
 // rechaza `family_name`) — no hay forma de saber cuál es de antemano sin probar, así que
