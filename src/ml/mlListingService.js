@@ -235,6 +235,26 @@ async function createMlItem(token, payload) {
       const item = await svc.createItem(token, { ...payload, shippingFree: true });
       return { ...item, shippingFreeUsed: true };
     }
+
+    // Cualquier atributo "conditional_required" que no supimos completar solos (GTIN vía
+    // fillMissingGtinExemption, UNITS_PER_PACK vía fillMissingUnitsPerPack, etc. ya se resuelven
+    // ANTES de llegar acá) — en vez de fallar en seco con un error sin salida, se le devuelve al
+    // controller el atributo puntual que falta (con su definición real de ML: nombre, tipo,
+    // opciones si es una lista) para que el wizard se lo pida al vendedor ahí mismo y reintente.
+    // Sirve para cualquier categoría y cualquier atributo, no solo los que ya conocemos hoy.
+    const missingMatch = err.message.match(/attributes?\s*\[([A-Z0-9_,\s]+)\]\s*(?:is|are)\s*required/i);
+    if (missingMatch) {
+      const attrId = missingMatch[1].split(",")[0].trim(); // si ML pide varios, resolvemos de a uno por reintento
+      const categoryAttrs = await svc.getRawCategoryAttributes(payload.categoryId).catch(() => null);
+      const attrDef = categoryAttrs?.find(a => a.id === attrId);
+      if (attrDef) {
+        const e = new Error(`Falta completar "${attrDef.name}" para esta categoría`);
+        e.status = 422;
+        e.missingAttribute = { id: attrDef.id, name: attrDef.name, valueType: attrDef.value_type, values: attrDef.values || null };
+        throw e;
+      }
+    }
+
     throw err;
   }
 }

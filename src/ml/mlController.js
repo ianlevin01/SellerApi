@@ -385,7 +385,7 @@ export async function publishProduct(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishProduct:", err.message);
-    return res.status(err.status || 500).json({ message: err.message || "Error" });
+    return res.status(err.status || 500).json({ message: err.message || "Error", ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}) });
   }
 }
 
@@ -434,7 +434,7 @@ export async function publishCombo(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishCombo:", err.message);
-    return res.status(err.status || 500).json({ message: err.message || "Error" });
+    return res.status(err.status || 500).json({ message: err.message || "Error", ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}) });
   }
 }
 
