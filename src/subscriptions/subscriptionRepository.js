@@ -123,18 +123,18 @@ export async function savePlanMpId(planId, mpPlanId) {
 
 // ── Pagos individuales ───────────────────────────────────────
 
-export async function savePayment(sellerId, { mpPaymentId, planId, amount, status, paymentDate }) {
+export async function savePayment(sellerId, { mpPaymentId, planId, amount, status, statusDetail, paymentDate }) {
   await pool.query(
-    `INSERT INTO subscription_payments (seller_id, mp_payment_id, plan_id, amount, status, payment_date)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (mp_payment_id) DO UPDATE SET status = EXCLUDED.status`,
-    [sellerId, mpPaymentId, planId || null, amount || null, status, paymentDate || new Date()]
+    `INSERT INTO subscription_payments (seller_id, mp_payment_id, plan_id, amount, status, status_detail, payment_date)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (mp_payment_id) DO UPDATE SET status = EXCLUDED.status, status_detail = EXCLUDED.status_detail`,
+    [sellerId, mpPaymentId, planId || null, amount || null, status, statusDetail || null, paymentDate || new Date()]
   );
 }
 
 export async function getPaymentHistory(sellerId) {
   const { rows } = await pool.query(
-    `SELECT sp.id, sp.mp_payment_id, sp.plan_id, sp.amount, sp.status, sp.payment_date,
+    `SELECT sp.id, sp.mp_payment_id, sp.plan_id, sp.amount, sp.status, sp.status_detail, sp.payment_date,
             pl.name AS plan_name
      FROM subscription_payments sp
      LEFT JOIN subscription_plans pl ON pl.id = sp.plan_id

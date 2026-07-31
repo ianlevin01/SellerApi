@@ -2,6 +2,7 @@ import axios from "axios";
 import * as repo from "./subscriptionRepository.js";
 import { transporter } from "../config/mailer.js";
 import * as listingSvc from "../ml/mlListingService.js";
+import { sendSubscriptionPaymentFailedEmail } from "../email/buyerEmails.js";
 
 const NOTIFY_EMAIL = "ventaz.oficial@gmail.com";
 
@@ -115,17 +116,13 @@ export async function resolveStatus(seller) {
   return seller;
 }
 
-// ── Obtener o crear plan en MP ───────────────────────────────
+// ── Obtener o crear el plan (plantilla) en MP ────────────────
+// Devuelve solo el mp_plan_id — el init_point ya NO sale de acá, porque ese init_point genérico
+// del plan es compartido por todos los vendedores y no lleva payer_email. Cada vendedor recibe
+// su propio preapproval personal (ver createPersonalPreapproval).
 
-async function ensureMpPlan(plan) {
-  if (plan.mp_plan_id) {
-    console.log(`[sub] usando plan existente mp_plan_id="${plan.mp_plan_id}"`);
-    const res = await axios.get(
-      `${MP_BASE}/preapproval_plan/${plan.mp_plan_id}`,
-      { headers: mpHeaders() }
-    );
-    return res.data.init_point;
-  }
+async function ensureMpPlanId(plan) {
+  if (plan.mp_plan_id) return plan.mp_plan_id;
 
   const notifUrl = `${BACKEND_URL}/seller/purchase/webhook`;
   console.log(`[sub] creando plan en MP para "${plan.name}" — $${plan.price_ars}`);
@@ -147,6 +144,30 @@ async function ensureMpPlan(plan) {
 
   console.log(`[sub] plan creado id="${res.data.id}" amount="${res.data.auto_recurring?.transaction_amount}"`);
   await repo.savePlanMpId(plan.id, res.data.id);
+  return res.data.id;
+}
+
+// Preapproval personal del vendedor — a diferencia del init_point genérico del plan (que
+// reusaba el mismo checkout para todos y dejaba que MP completara payer_email con lo que sea
+// que detecte en el login), esto crea una suscripción propia con payer_email y
+// external_reference explícitos desde el arranque. Mercado Pago señaló que la falta de datos
+// consistentes del pagador puede hacer que el débito automático no avance correctamente — esto
+// lo resuelve de raíz, y de paso external_reference = sellerId nos da una forma confiable de
+// encontrar al vendedor en el webhook sin depender de payer_email.
+async function createPersonalPreapproval(mpPlanId, plan, sellerId, sellerEmail) {
+  console.log(`[sub] creando preapproval personal seller="${sellerId}" plan_mp="${mpPlanId}" payer_email="${sellerEmail}"`);
+  const res = await axios.post(
+    `${MP_BASE}/preapproval`,
+    {
+      preapproval_plan_id: mpPlanId,
+      reason:              `${plan.name} Ventaz`,
+      external_reference:  sellerId,
+      payer_email:         sellerEmail,
+      back_url:            getBackUrl(),
+    },
+    { headers: mpHeaders() }
+  );
+  console.log(`[sub] preapproval creado id="${res.data.id}" status="${res.data.status}"`);
   return res.data.init_point;
 }
 
@@ -159,8 +180,9 @@ export async function createSubscription(sellerId, sellerEmail, planId) {
   const plan = await repo.getPlanById(planId);
   if (!plan) throw { status: 404, message: "Plan no encontrado" };
 
-  // Primero crear el plan en MP — si falla, no ensuciamos la BD
-  const initPoint = await ensureMpPlan(plan);
+  // Primero crear el plan/preapproval en MP — si falla, no ensuciamos la BD
+  const mpPlanId  = await ensureMpPlanId(plan);
+  const initPoint = await createPersonalPreapproval(mpPlanId, plan, sellerId, sellerEmail);
 
   // Recién después guardar pending_plan_id para que el webhook lo use
   await repo.updateSellerSubscription(sellerId, { pending_plan_id: planId });
@@ -277,6 +299,24 @@ export async function cancelSubscription(sellerId) {
   return { message: "Suscripción cancelada. Conservás el acceso hasta el final del período." };
 }
 
+// ── Reintentar suscripción tras un cobro rechazado ───────────
+// Cancela el preapproval anterior (si existe) para que no siga reintentando en paralelo con el
+// nuevo — si no, el día que al vendedor le vuelva a entrar plata, podría terminar cobrándole
+// dos veces — y arranca de cero el flujo de alta normal para el mismo plan que ya tenía (mismo
+// checkout de MP que usa un alta nueva: ahí el vendedor puede elegir tarjeta o dinero en cuenta).
+export async function retrySubscription(sellerId, sellerEmail) {
+  const current = await repo.getSellerSubscription(sellerId);
+  if (!current) throw { status: 404, message: "No se encontró la suscripción" };
+  if (!current.plan_id) throw { status: 400, message: "No hay un plan para reintentar" };
+
+  if (current.mp_subscription_id) {
+    await cancelMpSubscription(current.mp_subscription_id).catch(e =>
+      console.warn("[sub] no se pudo cancelar la suscripción anterior al reintentar:", e.message));
+  }
+
+  return createSubscription(sellerId, sellerEmail, current.plan_id);
+}
+
 // ── Webhook de MercadoPago ───────────────────────────────────
 
 export async function handleWebhook(type, dataId) {
@@ -300,9 +340,16 @@ export async function handleWebhook(type, dataId) {
   const payerEmail = mpSub.payer_email || mpSub.payer?.email;
   console.log("[sub-webhook] preapproval COMPLETO:", JSON.stringify(mpSub, null, 2));
 
-  // Buscar vendedor: primero por mp_subscription_id, luego por payer_email
+  // Buscar vendedor: primero por mp_subscription_id, después por external_reference (= sellerId,
+  // seteado al crear el preapproval — más confiable que el email, que MP señaló que puede venir
+  // inconsistente/vacío), y como último recurso por payer_email.
   let seller = await repo.findSellerByMpSubscriptionId(dataId);
   console.log(`[sub-webhook] buscar por mp_subscription_id="${dataId}":`, seller ? `encontrado (${seller.email})` : "no encontrado");
+
+  if (!seller && mpSub.external_reference) {
+    seller = await repo.findSellerById(mpSub.external_reference);
+    console.log(`[sub-webhook] buscar por external_reference="${mpSub.external_reference}":`, seller ? `encontrado (${seller.email})` : "no encontrado");
+  }
 
   if (!seller && payerEmail) {
     seller = await repo.findSellerByEmail(payerEmail.toLowerCase());
@@ -335,6 +382,21 @@ export async function handleWebhook(type, dataId) {
     default:
       console.log(`[sub-webhook] status="${mpStatus}" no requiere acción`);
       return;
+  }
+
+  // "authorized" en un preapproval que YA estaba activo con este mismo mp_subscription_id NO
+  // confirma un cobro nuevo — el mandato recurrente se queda en "authorized" todos los meses
+  // aunque el cobro puntual de ese ciclo haya quedado "scheduled"/rechazado (ver investigación
+  // de julio 2026: el pago nunca se concretó y sin embargo este webhook igual mandaba el mail
+  // de "pago exitoso" y extendía el período pago). Confirmar/extender una renovación real queda
+  // exclusivamente a cargo de handleAuthorizedPaymentWebhook, que sí refleja el cobro puntual.
+  // Acá solo tratamos "authorized" como una activación real cuando es genuinamente nueva: alta,
+  // cambio de plan (mp_subscription_id distinto), o reactivación desde un estado no-activo.
+  const alreadyTrackedUnderThisMandate = seller.mp_subscription_id === dataId &&
+    (seller.plan_status === "active" || seller.plan_status === "pending_payment");
+  if (newStatus === "active" && alreadyTrackedUnderThisMandate) {
+    console.log(`[sub-webhook] preapproval="${dataId}" sigue "authorized" pero ya estaba activo/pendiente bajo este mismo mandato — no es un cobro nuevo, se ignora`);
+    return;
   }
 
   // Si MP cancela pero hay un downgrade pendiente Y el período aún no venció,
@@ -477,6 +539,29 @@ export async function getSubscriptionStatus(sellerId) {
 
 // ── Webhook de cobro de suscripción (subscription_authorized_payment) ──
 
+// Motivos de rechazo de MP que sabemos traducir — el resto se muestra tal cual (código crudo)
+// en vez de inventar un texto genérico que podría ser engañoso.
+const REJECTION_REASONS_ES = {
+  insufficient_amount: "no había saldo suficiente en el medio de pago",
+};
+
+function humanRejectionReason(code) {
+  return REJECTION_REASONS_ES[code] || code || null;
+}
+
+// El status externo del authorized_payment (authPayment.status) se queda en "scheduled" tanto
+// si todavía no se intentó cobrar como si ya se intentó y falló — el resultado real del intento
+// vive en el objeto anidado `payment` (status/status_detail) y en `rejection_code`. Sin mirar
+// eso, un cobro rechazado se guardaba y se mostraba como "scheduled" (ambiguo, no dice nada) en
+// vez de "rechazado" — y nunca se avisaba al vendedor de que la venía falló.
+function deriveAuthPaymentStatus(authPayment) {
+  if (authPayment.status === "processed") return { status: "approved", detail: null };
+  if (authPayment.payment?.status === "rejected" || authPayment.status === "recycling") {
+    return { status: "rejected", detail: authPayment.rejection_code || authPayment.payment?.status_detail || null };
+  }
+  return { status: authPayment.status || "unknown", detail: null };
+}
+
 async function handleAuthorizedPaymentWebhook(authorizedPaymentId) {
   console.log(`[auth-pay-webhook] id="${authorizedPaymentId}"`);
 
@@ -501,27 +586,39 @@ async function handleAuthorizedPaymentWebhook(authorizedPaymentId) {
     return;
   }
 
-  const status = authPayment.status === "processed" ? "approved"
-               : authPayment.status === "recycling"  ? "rejected"
-               : authPayment.status || "unknown";
+  const { status, detail } = deriveAuthPaymentStatus(authPayment);
 
   await repo.savePayment(seller.id, {
-    mpPaymentId:  String(authPayment.id),
-    planId:       seller.plan_id,
-    amount:       authPayment.transaction_amount,
+    mpPaymentId:   String(authPayment.id),
+    planId:        seller.plan_id,
+    amount:        authPayment.transaction_amount,
     status,
-    paymentDate:  authPayment.date_created,
+    statusDetail:  detail,
+    paymentDate:   authPayment.date_created,
   });
 
-  // Actualizar plan_period_end si el pago fue aprobado
   if (status === "approved") {
+    // Único lugar que confirma una renovación real — acá sí corresponde extender el período y
+    // avisar (a diferencia del webhook de preapproval, que solo refleja el mandato, no el cobro).
     await repo.updateSellerSubscription(seller.id, {
       plan_status:     "active",
       ...(authPayment.next_payment_date ? { plan_period_end: new Date(authPayment.next_payment_date) } : {}),
     });
     const plan = await repo.getPlanById(seller.plan_id);
     await notifyPlanPayment(seller, plan?.name || seller.plan_id, authPayment.transaction_amount);
+  } else if (status === "rejected") {
+    // No tocamos plan_period_end (el vendedor conserva acceso hasta la fecha ya pagada — el
+    // vencimiento natural lo resuelve resolveStatus como siempre) — pero sí marcamos el plan
+    // como "pending_payment" para que se vea en el panel que algo necesita atención, y avisamos
+    // al vendedor (esto antes no existía: el intento fallido no le llegaba a nadie salvo por acá).
+    await repo.updateSellerSubscription(seller.id, { plan_status: "pending_payment" });
+    const plan = await repo.getPlanById(seller.plan_id);
+    sendSubscriptionPaymentFailedEmail(seller.email, {
+      planName: plan?.name || seller.plan_id,
+      amount:   authPayment.transaction_amount,
+      reason:   humanRejectionReason(detail),
+    }).catch(() => {});
   }
 
-  console.log(`[auth-pay-webhook] ✓ pago guardado seller="${seller.id}" status="${status}"`);
+  console.log(`[auth-pay-webhook] ✓ pago guardado seller="${seller.id}" status="${status}"${detail ? ` detail="${detail}"` : ""}`);
 }

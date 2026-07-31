@@ -57,6 +57,20 @@ export async function link(req, res) {
   }
 }
 
+export async function retry(req, res) {
+  try {
+    const result = await service.retrySubscription(req.seller.id, req.seller.email);
+    res.json(result);
+  } catch (err) {
+    const mpError = err.response?.data;
+    if (mpError) {
+      console.error("[subscriptions] Error de MercadoPago (retry):", JSON.stringify(mpError, null, 2));
+      return res.status(err.response.status || 500).json({ message: mpError.message || mpError.error || "Error de MercadoPago" });
+    }
+    res.status(err.status || 500).json({ message: err.message || "Error interno" });
+  }
+}
+
 export async function cancel(req, res) {
   try {
     const result = await service.cancelSubscription(req.seller.id);

@@ -20,6 +20,7 @@ router.use(requireSeller);
 router.get("/status",             ctrl.getStatus);
 router.post("/subscribe",          ctrl.subscribe);
 router.post("/cancel",             ctrl.cancel);
+router.post("/retry",              ctrl.retry);
 router.post("/link",               ctrl.link);
 router.post("/schedule-downgrade", ctrl.scheduleDowngrade);
 

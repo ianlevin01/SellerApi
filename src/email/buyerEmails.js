@@ -1242,6 +1242,30 @@ export async function sendMlChargeFailedEmail(sellerEmail, { amount, reason, blo
   }
 }
 
+// Se manda cuando el débito automático mensual de la suscripción (Mercado Pago Preapproval)
+// se intenta y se rechaza — antes esto no le llegaba a nadie salvo un estado ambiguo
+// ("scheduled") en el panel; ahora se avisa apenas se confirma el rechazo real.
+export async function sendSubscriptionPaymentFailedEmail(sellerEmail, { planName, amount, reason }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:#dc2626">No pudimos cobrar tu suscripción</h2>
+    <p style="margin:0 0 16px;font-size:14px;color:#374151">
+      Intentamos debitar ${fmt(amount)} correspondiente a tu <strong>${planName}</strong> y no pudimos completar el cobro${reason ? ` (${reason})` : ""}.
+      Entrá a la sección Planes para pagarlo de nuevo o cambiar tu medio de pago — mientras tanto conservás el acceso hasta el final de tu período ya pago.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="${PANEL_URL}/subscription" style="display:inline-block;background:#dc2626;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 28px;border-radius:9px">
+        Ver mi plan →
+      </a>
+    </td></tr></table>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "⚠️ No pudimos cobrar tu suscripción de Ventaz", html });
+  } catch (err) {
+    console.error("[email] sendSubscriptionPaymentFailedEmail error:", err.message);
+  }
+}
+
 export async function sendMlChargeSuccessEmail(sellerEmail, { amount }) {
   const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
   const html = baseLayout(`
@@ -1290,3 +1314,4 @@ export async function sendMlClaimNotification(sellerEmail, { itemTitle, claimRea
     console.error("[email] sendMlClaimNotification error:", err.message);
   }
 }
+
