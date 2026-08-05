@@ -179,7 +179,7 @@ function needsClassicTitleFallback(data) {
 // hosteadas (ej. las de S3), o { id: picture_id } para las subidas vía uploadPicture().
 // dimensions: "LxWxHcm,pesoGramos" — sin esto ML no puede calcular bien costo/tiempo de envío
 // y suele caer a una estimación genérica (lenta y cara).
-export async function createItem(token, { title, categoryId, price, currencyId = "ARS", stock, condition = "new", description, pictures, attributes, listingTypeId = "gold_special", shippingFree, dimensions }) {
+export async function createItem(token, { title, categoryId, price, currencyId = "ARS", stock, condition = "new", description, pictures, attributes, listingTypeId = "gold_special", shippingFree, dimensions, tags }) {
   const baseBody = {
     category_id: categoryId, price, currency_id: currencyId,
     available_quantity: stock, buying_mode: "buy_it_now", condition,
@@ -187,6 +187,9 @@ export async function createItem(token, { title, categoryId, price, currencyId =
     pictures: pictures || [],
     attributes: attributes || [],
     shipping: { mode: "me2", free_shipping: !!shippingFree, ...(dimensions ? { dimensions } : {}) },
+    // Activa la campaña de cuotas elegida (cuota-simple-3/6/9/12, pcj-co-funded, etc.) — sin
+    // esto el ítem se crea con el listing_type_id correcto pero SIN la campaña puntual habilitada.
+    ...(tags?.length ? { tags } : {}),
   };
 
   let result = await apiWriteRaw("POST", "/items", token, {
@@ -247,55 +250,107 @@ export async function getItem(token, itemId) {
   return apiGet(`/items/${itemId}`, token);
 }
 
-async function fetchListingPrices(token, siteId, { price, categoryId, listingTypeId }) {
+// Domicilios cargados en la cuenta del vendedor — cada uno con "types" (puede incluir
+// "shipping", que ML documenta como "la dirección desde la que se despachan los envíos") y su
+// zip_code. Se usa para validar que el vendedor tenga cargado el depósito real de Ventaz.
+export async function getUserAddresses(token, mlUserId) {
+  const data = await apiGet(`/users/${mlUserId}/addresses`, token);
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchListingPrices(token, siteId, { price, categoryId, listingTypeId, tags }) {
   const params = new URLSearchParams({ price, category_id: categoryId, listing_type_id: listingTypeId });
+  if (tags) params.set("tags", tags);
   const data = await apiGet(`/sites/${siteId}/listing_prices?${params}`, token);
   return Array.isArray(data) ? data[0] : data;
 }
 
-// Desglose de comisión/costos de ML para un precio+categoría — lo mismo que ML muestra
-// como "Recibís" al publicar. No hace falta el ítem creado, solo precio/categoría/tipo de listado.
+// Campañas reales de cuotas de ML (confirmadas contra la documentación oficial de
+// "Campaigns with installments for Marketplace"). Cada una es una combinación puntual de
+// listing_type_id + tag — no existe un único endpoint que devuelva "todas las opciones de
+// cuotas" de una, hay que pedir cada combinación por separado y quedarnos con las que
+// respondan (no todas las categorías/cuentas tienen todas las campañas habilitadas).
 //
-// Las cuotas sin interés en ML no se activan con un parámetro suelto en este endpoint — están
-// atadas al listing_type: "Clásica" (gold_special) nunca las incluye, "Premium" (gold_pro) sí,
-// a cambio de una comisión más alta. Por eso para poder ofrecerle al vendedor la opción de
-// "ofrecer cuotas" consultamos los dos tipos en paralelo y calculamos la diferencia — no todas
-// las categorías tienen Premium disponible, si falla simplemente no se ofrece la opción.
-export async function getListingFees(token, siteId, { price, categoryId, listingTypeId = "gold_special" }) {
-  const [classic, premium] = await Promise.all([
+// "cuota-simple-9"/"cuota-simple-12" ya no están en la documentación vigente (ML las recortó
+// a 3/6 en 2025), pero algunas categorías puntuales (ML lo muestra en su propio flujo) todavía
+// las ofrecen — se intentan igual, sin asumir que van a existir; si la cuenta/categoría no
+// las tiene habilitadas, ML devuelve error y simplemente se excluyen de la lista.
+const INSTALLMENT_CAMPAIGNS = [
+  { id: "pcj",  label: "3 a 12 cuotas con interés bajo",           listingTypeId: "gold_special", tags: "pcj-co-funded",   badge: "Cuota promocionada", desc: "Tus compradores pagan hasta 70% menos del interés que cobran los bancos." },
+  { id: "cs3",  label: "3 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-3",  desc: null },
+  { id: "cs6",  label: "6 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-6",  badge: "Cuota recomendada", desc: "Esta opción aumenta tus posibilidades de vender." },
+  { id: "cs9",  label: "9 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-9",  desc: null },
+  { id: "cs12", label: "12 cuotas al mismo precio que publicaste", listingTypeId: "gold_pro",      tags: "cuota-simple-12", desc: null },
+];
+
+// Desglose de comisión/costos de ML para un precio+categoría — lo mismo que ML muestra
+// como "Recibís" al publicar. No hace falta el ítem creado, solo precio/categoría.
+//
+// includeInstallments=false evita las 5 consultas extra de campañas de cuotas cuando no hace
+// falta mostrarlas (ej. la fila de cada publicación en el listado, que solo muestra cargo por
+// vender/recibís) — pedirlas ahí sería tráfico desperdiciado contra la API de ML por cada
+// publicación que tenga el vendedor.
+export async function getListingFees(token, siteId, { price, categoryId, listingTypeId = "gold_special", includeInstallments = true }) {
+  const [classic, ...campaignResults] = await Promise.all([
     fetchListingPrices(token, siteId, { price, categoryId, listingTypeId }),
-    fetchListingPrices(token, siteId, { price, categoryId, listingTypeId: "gold_pro" }).catch(() => null),
+    ...(includeInstallments ? INSTALLMENT_CAMPAIGNS.map(c =>
+      fetchListingPrices(token, siteId, { price, categoryId, listingTypeId: c.listingTypeId, tags: c.tags }).catch(() => null)
+    ) : []),
   ]);
 
   const saleFee = Number(classic?.sale_fee_amount || 0);
-  const premiumFee = premium ? Number(premium.sale_fee_amount || 0) : null;
+
+  const installmentOptions = campaignResults
+    .map((result, i) => ({ campaign: INSTALLMENT_CAMPAIGNS[i], result }))
+    .filter(({ result }) => result)
+    .map(({ campaign, result }) => {
+      const fee = Number(result.sale_fee_amount || 0);
+      return {
+        id:            campaign.id,
+        label:         campaign.label,
+        badge:         campaign.badge || null,
+        desc:          campaign.desc || null,
+        percentageFee: result.sale_fee_details?.percentage_fee ?? null,
+        extraCost:     Math.max(0, fee - saleFee),
+        saleFeeAmount: fee,
+        netAmount:     Number(price) - fee,
+        // Se devuelven para que el publish pueda mandar exactamente esto y activar la campaña
+        // elegida en el ítem creado (POST /items con listing_type_id + tags).
+        listingTypeId: campaign.listingTypeId,
+        tags:          [campaign.tags],
+      };
+    });
 
   return {
     saleFeeAmount: saleFee,
     netAmount:     Number(price) - saleFee,
     listingTypeId: classic?.listing_type_name || listingTypeId,
-    // Costo adicional de pasar a Premium para poder ofrecer cuotas sin interés — null si esa
-    // categoría no tiene Premium disponible (no se debe mostrar la opción en ese caso).
-    installments: premiumFee !== null ? { extraCost: Math.max(0, premiumFee - saleFee) } : null,
+    // Lista de campañas de cuotas realmente disponibles para esta cuenta/categoría/precio —
+    // vacía si ML no habilitó ninguna (no se debe mostrar el selector en ese caso).
+    installmentOptions,
   };
 }
 
 // Costo estimado de asumir el envío gratis para el comprador — mismo simulador que usa ML
 // antes de publicar (GET /users/{user_id}/shipping_options/free). dimensions viene en el mismo
-// formato "LxWxHxpeso" que ya arma mlListingService.estimateShippingDimensions(). Solo mandamos
-// los parámetros realmente necesarios (dimensions, precio, tipo de listado) — mode/logistic_type
-// quedan a criterio de ML según cómo tenga configurado el vendedor su cuenta; forzarlos a un
-// valor fijo podía estar devolviendo $0 para cuentas que no calzaban con esa combinación puntual.
+// formato "LxWxHxpeso" que ya arma mlListingService.estimateShippingDimensions().
 export async function getShippingCostEstimate(token, mlUserId, { price, dimensions, listingTypeId = "gold_special" }) {
   const params = new URLSearchParams({
     dimensions, verbose: "true", item_price: price, listing_type_id: listingTypeId,
+    mode: "me2", condition: "new", logistic_type: "drop_off",
   });
   const data = await apiGet(`/users/${mlUserId}/shipping_options/free?${params}`, token);
-  const option = Array.isArray(data?.options) ? data.options[0] : (Array.isArray(data) ? data[0] : data);
-  return {
-    cost:     Number(option?.cost ?? option?.list_cost ?? 0),
-    listCost: Number(option?.list_cost ?? option?.cost ?? 0),
-  };
+  // La respuesta real viene anidada en coverage.all_country.list_cost (no en un array "options"
+  // ni en el objeto raíz como se asumía antes) — list_cost ya viene neto de cualquier descuento
+  // de reputación (ML lo aplica del lado de ellos), no hace falta restar nada más.
+  //
+  // Importante: si list_cost no vino en la respuesta (undefined/null), NO se devuelve 0 — se
+  // tira error para que el llamador lo trate como "no se pudo calcular" en vez de mostrar un
+  // $0 que podría no ser real. Antes ese "?? 0" disimulaba cualquier parseo fallido como si el
+  // envío realmente costara cero.
+  const coverage = data?.coverage?.all_country || data?.coverage?.same_state || null;
+  if (coverage?.list_cost == null) throw new Error("ML no devolvió una cotización de envío para este producto");
+  return { cost: Number(coverage.list_cost) };
 }
 
 // Visitas + unidades vendidas + calidad de una publicación ya creada.

@@ -28,6 +28,7 @@ router.post  ("/wallet/pay-blocked-debt", ctrl.payBlockedDebt);
 
 router.get   ("/listings",                      ctrl.getListings);
 router.get   ("/summary",                       ctrl.getSummary);
+router.get   ("/shipping-address-status",       ctrl.getShippingAddressStatus);
 router.get   ("/categories/suggest",            ctrl.suggestCategory);
 router.get   ("/categories/:id/attributes",     ctrl.getCategoryAttributes);
 router.post  ("/pictures/upload", upload10mb.single("image"), ctrl.uploadPicture);

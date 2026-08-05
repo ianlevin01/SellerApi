@@ -129,6 +129,74 @@ async function buildPictureRef(token, key) {
   }
 }
 
+// Depósito real de Ventaz — de donde salen físicamente los pedidos, sin importar qué vendedor
+// aparece como dueño de la publicación en ML. Reusa el mismo CP que ya se usaba para cotizar
+// Correo Argentino (MICORREO_ORIGIN_CP) en vez de duplicar el dato en otro lado. Si el depósito
+// cambia de dirección en el futuro, estas dos variables (o el .env) son lo único que hay que tocar.
+const WAREHOUSE_ZIP     = String(process.env.MICORREO_ORIGIN_CP || "1028").match(/\d{4}/)?.[0] || "1028";
+const WAREHOUSE_ADDRESS = process.env.ML_WAREHOUSE_ADDRESS || "Pasteur 280, CABA";
+// Página de ayuda oficial de ML sobre cómo gestionar domicilios de despacho — no encontramos
+// (ni pudimos confirmar) una URL que lleve directo a la pantalla de edición, así que apuntamos
+// acá en vez de inventar un link que capaz no exista.
+const ML_ADDRESS_HELP_URL = "https://www.mercadolibre.com.ar/ayuda/28966";
+
+function formatMlAddress(addr) {
+  if (!addr) return null;
+  const parts = [
+    [addr.street_name, addr.street_number].filter(Boolean).join(" "),
+    addr.city?.name || addr.city,
+    addr.state?.name || addr.state,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : (addr.address || null);
+}
+
+// Compara el domicilio de despacho cargado en Mercado Libre contra el depósito real de Ventaz.
+// Si ML no devuelve nada interpretable (cuenta nueva, cambio de formato de la API, etc.) queda
+// "unknown" — preferimos no bloquear publicaciones por una duda nuestra, solo bloqueamos cuando
+// estamos seguros de que el domicilio cargado NO es el correcto.
+export async function getShippingAddressInfo(sellerId) {
+  const token = await getValidToken(sellerId);
+  if (!token) return { connected: false };
+  const conn = await repo.getConnection(sellerId);
+  if (!conn?.ml_user_id) return { connected: false };
+
+  let addresses = null;
+  try { addresses = await svc.getUserAddresses(token, conn.ml_user_id); } catch { addresses = null; }
+
+  const base = { connected: true, warehouseAddress: WAREHOUSE_ADDRESS, changeAddressUrl: ML_ADDRESS_HELP_URL };
+  if (!Array.isArray(addresses) || addresses.length === 0) return { ...base, unknown: true };
+
+  const shippingAddr = addresses.find(a => a.types?.includes("shipping"))
+    || addresses.find(a => a.types?.includes("default_selling_address"))
+    || addresses[0];
+
+  const currentZip = String(shippingAddr?.zip_code || "").match(/\d{4}/)?.[0] || null;
+  if (!currentZip) return { ...base, unknown: true };
+
+  return {
+    ...base,
+    unknown: false,
+    valid: currentZip === WAREHOUSE_ZIP,
+    currentZip,
+    currentAddress: formatMlAddress(shippingAddr),
+  };
+}
+
+// Usado antes de publicar — solo bloquea cuando getShippingAddressInfo está seguro de que el
+// domicilio no coincide (valid === false); si quedó "unknown", deja publicar igual.
+async function assertShippingAddressOk(sellerId) {
+  const info = await getShippingAddressInfo(sellerId);
+  if (info.connected && info.valid === false) {
+    const e = new Error(`El domicilio de despacho de tu cuenta de Mercado Libre (${info.currentAddress || "sin datos"}) no coincide con el depósito de Ventaz (${info.warehouseAddress}). Actualizalo en Mercado Libre para poder publicar.`);
+    e.status = 403;
+    e.addressMismatch = true;
+    e.currentAddress = info.currentAddress;
+    e.warehouseAddress = info.warehouseAddress;
+    e.changeAddressUrl = info.changeAddressUrl;
+    throw e;
+  }
+}
+
 // Límite de publicaciones activas según el plan — mismo patrón que el límite de tiendas en
 // storeService.createPage. Compartido por publishProduct y publishCombo.
 async function checkMlListingLimit(sellerId) {
@@ -236,6 +304,16 @@ async function createMlItem(token, payload) {
       return { ...item, shippingFreeUsed: true };
     }
 
+    // La campaña de cuotas elegida (tags) puede no estar habilitada para esta cuenta/categoría
+    // puntual (ej. "Cuota Simple" exige producto de fabricación nacional) aunque el simulador
+    // de precios la haya mostrado como disponible — mejor publicar sin la campaña que bloquear
+    // la publicación entera por una preferencia de financiación.
+    if (payload.tags?.length) {
+      console.warn("[ml] no se pudo aplicar la campaña de cuotas, reintentando sin tags:", err.message);
+      const item = await svc.createItem(token, { ...payload, tags: [] });
+      return { ...item, shippingFreeUsed: !!payload.shippingFree, installmentTagsApplied: false };
+    }
+
     // Cualquier atributo "conditional_required" que no supimos completar solos (GTIN vía
     // fillMissingGtinExemption, UNITS_PER_PACK vía fillMissingUnitsPerPack, etc. ya se resuelven
     // ANTES de llegar acá) — en vez de fallar en seco con un error sin salida, se le devuelve al
@@ -274,6 +352,7 @@ export async function publishProduct(sellerId, productId, config) {
   if (!config.price || config.price <= 0) { const e = new Error("Falta el precio para Mercado Libre"); e.status = 400; throw e; }
 
   await checkMlListingLimit(sellerId);
+  await assertShippingAddressOk(sellerId);
 
   const floor = await getPriceFloor(sellerId, productId);
   if (config.price < floor) {
@@ -308,6 +387,7 @@ export async function publishProduct(sellerId, productId, config) {
     attributes,
     shippingFree: config.shippingFree,
     listingTypeId: config.listingTypeId || "gold_special",
+    tags: config.installmentTags || [],
   });
 
   return repo.createListing(sellerId, {
@@ -411,6 +491,7 @@ export async function publishCombo(sellerId, comboId, config) {
   if (!config.price || config.price <= 0) { const e = new Error("Falta el precio para Mercado Libre"); e.status = 400; throw e; }
 
   await checkMlListingLimit(sellerId);
+  await assertShippingAddressOk(sellerId);
 
   const floor = await getComboPriceFloor(sellerId, comboId);
   if (config.price < floor) {
@@ -447,6 +528,7 @@ export async function publishCombo(sellerId, comboId, config) {
     attributes,
     shippingFree: config.shippingFree,
     listingTypeId: config.listingTypeId || "gold_special",
+    tags: config.installmentTags || [],
   });
 
   return repo.createListing(sellerId, {

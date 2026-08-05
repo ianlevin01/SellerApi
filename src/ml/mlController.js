@@ -174,6 +174,16 @@ export async function getListings(req, res) {
   }
 }
 
+// GET /seller/ml/shipping-address-status — para el banner de aviso + el checklist de onboarding
+export async function getShippingAddressStatus(req, res) {
+  try {
+    return res.json(await listingSvc.getShippingAddressInfo(req.seller.id));
+  } catch (err) {
+    console.error("[ml] getShippingAddressStatus:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
 // GET /seller/ml/summary — para la pestaña "Resumen"
 export async function getSummary(req, res) {
   try {
@@ -207,19 +217,22 @@ export async function getCategoryAttributes(req, res) {
   }
 }
 
-// GET /seller/ml/listing-fees?price=X&categoryId=Y&weightGrams=&volumeCm3=&freeShipping= —
-// desglose de comisión ("Recibís"). Los últimos 3 params son opcionales — si vienen, además
-// se calcula el costo estimado de envío gratis (mismo simulador que usa ML antes de publicar).
+// GET /seller/ml/listing-fees?price=X&categoryId=Y&weightGrams=&volumeCm3= —
+// desglose de comisión ("Recibís"). weightGrams/volumeCm3 son opcionales — si vienen, además
+// se calcula el costo estimado de ofrecer envío gratis (mismo simulador que usa ML antes de
+// publicar). Se calcula SIEMPRE que haya peso/volumen, esté tildado el checkbox o no — así el
+// vendedor ve cuánto le va a costar ANTES de decidir, en vez de tener que tildarlo a ciegas
+// para recién ahí enterarse del costo.
 export async function getListingFees(req, res) {
   try {
     const token = await getValidToken(req.seller.id);
     if (!token) return res.status(400).json({ message: "Mercado Libre no está conectado" });
     const conn = await repo.getConnection(req.seller.id);
-    const { price, categoryId, weightGrams, volumeCm3, freeShipping } = req.query;
+    const { price, categoryId, weightGrams, volumeCm3 } = req.query;
     if (!price || !categoryId) return res.status(400).json({ message: "Faltan price/categoryId" });
     const fees = await svc.getListingFees(token, conn?.site_id || "MLA", { price, categoryId });
 
-    if (freeShipping === "true" && weightGrams && volumeCm3 && conn?.ml_user_id) {
+    if (weightGrams && volumeCm3 && conn?.ml_user_id) {
       const dimensions = listingSvc.estimateShippingDimensions(Number(weightGrams), Number(volumeCm3));
       if (dimensions) {
         fees.shippingCost = await svc.getShippingCostEstimate(token, conn.ml_user_id, { price, dimensions })
@@ -250,7 +263,7 @@ export async function getListingStats(req, res) {
     const [stats, fees] = await Promise.all([
       svc.getItemStats(token, req.params.mlItemId),
       listing?.price && listing?.ml_category_id
-        ? svc.getListingFees(token, conn?.site_id || "MLA", { price: listing.price, categoryId: listing.ml_category_id })
+        ? svc.getListingFees(token, conn?.site_id || "MLA", { price: listing.price, categoryId: listing.ml_category_id, includeInstallments: false })
         : null,
     ]);
     return res.json({ ...stats, fees });
@@ -385,7 +398,11 @@ export async function publishProduct(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishProduct:", err.message);
-    return res.status(err.status || 500).json({ message: err.message || "Error", ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}) });
+    return res.status(err.status || 500).json({
+      message: err.message || "Error",
+      ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
+      ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+    });
   }
 }
 
@@ -434,7 +451,11 @@ export async function publishCombo(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishCombo:", err.message);
-    return res.status(err.status || 500).json({ message: err.message || "Error", ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}) });
+    return res.status(err.status || 500).json({
+      message: err.message || "Error",
+      ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
+      ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+    });
   }
 }
 
