@@ -1,4 +1,4 @@
-import { getOnboardingProgress, getOnboardingProgressMl, dismissOnboarding, setOnboardingTrack, getSellerOnboardingTrack } from "./onboardingRepository.js";
+import { getOnboardingProgress, getOnboardingProgressMl, dismissOnboarding, setOnboardingTrack, getSellerOnboardingTrack, setHasSoldOnMlBefore } from "./onboardingRepository.js";
 
 export async function handleGetProgress(req, res) {
   try {
@@ -34,6 +34,21 @@ export async function handleSetTrack(req, res) {
     res.json(seller);
   } catch (err) {
     console.error("[onboarding] set track error:", err.message);
+    res.status(500).json({ error: "Error al guardar" });
+  }
+}
+
+export async function handleSetSoldBefore(req, res) {
+  try {
+    const { soldBefore } = req.body || {};
+    if (typeof soldBefore !== "boolean") {
+      return res.status(400).json({ error: "soldBefore inválido" });
+    }
+    const seller = await setHasSoldOnMlBefore(req.seller.id, soldBefore);
+    if (!seller) return res.status(404).json({ error: "No encontrado" });
+    res.json(seller);
+  } catch (err) {
+    console.error("[onboarding] set sold-before error:", err.message);
     res.status(500).json({ error: "Error al guardar" });
   }
 }

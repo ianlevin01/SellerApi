@@ -99,3 +99,11 @@ export async function setOnboardingTrack(sellerId, track) {
   );
   return rows[0] || null;
 }
+
+export async function setHasSoldOnMlBefore(sellerId, soldBefore) {
+  const { rows } = await pool.query(
+    `UPDATE sellers SET has_sold_on_ml_before = $1 WHERE id = $2 RETURNING id, has_sold_on_ml_before`,
+    [soldBefore, sellerId]
+  );
+  return rows[0] || null;
+}
