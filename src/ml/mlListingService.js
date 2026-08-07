@@ -339,8 +339,9 @@ async function createMlItem(token, payload) {
 
 // Publica un producto de Ventaz como un ítem nuevo en la cuenta de ML del seller.
 // config: { mlCategoryId, attributes, price, shippingFree, title, description,
-//           imageKeys (keys de S3 ya existentes que el vendedor dejó tildadas),
-//           pictureRefs (subidas nuevas vía uploadPictureForSeller, ya listas como { id } o { source }) }
+//           orderedImages: [{ type: "existing", key } | { type: "new", ref }] — en el orden
+//           elegido por el vendedor (la primera es la portada en ML). Se resuelve cada ítem
+//           en esa misma secuencia en vez de mandar siempre "primero catálogo, después nuevas". }
 export async function publishProduct(sellerId, productId, config) {
   const token = await getValidToken(sellerId);
   if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
@@ -361,11 +362,10 @@ export async function publishProduct(sellerId, productId, config) {
     throw e;
   }
 
-  const existingPictureRefs = await Promise.all((config.imageKeys || []).map(key => buildPictureRef(token, key)));
-  const pictures = [
-    ...existingPictureRefs.filter(Boolean),
-    ...(config.pictureRefs || []),
-  ];
+  const resolvedPictures = await Promise.all((config.orderedImages || []).map(item =>
+    item.type === "existing" ? buildPictureRef(token, item.key) : item.ref
+  ));
+  const pictures = resolvedPictures.filter(Boolean);
   if (pictures.length === 0) {
     const e = new Error("Seleccioná o subí al menos una imagen — Mercado Libre no permite publicar sin fotos");
     e.status = 400;
