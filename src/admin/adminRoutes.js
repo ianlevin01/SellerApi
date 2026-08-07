@@ -109,6 +109,7 @@ router.post("/ml/labels", async (req, res) => {
 
 router.get("/ml/wallets",                    h(() => svc.getMlWalletOverview()));
 router.get("/ml/sellers/:id/history",        h(req => svc.getMlSellerHistory(req.params.id)));
+router.patch("/ml/order-items/:id/assign",   h(req => svc.assignMlOrderItemProduct(req.params.id, req.body?.productId)));
 
 // Mailing IA
 router.post("/mailing/generate", async (req, res) => {

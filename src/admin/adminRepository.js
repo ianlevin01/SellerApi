@@ -264,15 +264,87 @@ export async function getMlSales({ from, to, chargeStatus } = {}) {
 
   const { rows } = await pool.query(`
     SELECT wo.id, wo.numero, wo.customer_name, wo.total, wo.ml_order_id, wo.ml_shipment_id,
-           wo.ml_cost_amount, wo.ml_charge_status, wo.created_at,
+           wo.ml_cost_amount, wo.ml_charge_status, wo.ml_logistic_type, wo.created_at,
            s.id AS seller_id, s.name AS seller_name, s.email AS seller_email, s.plan_id,
-           COALESCE((SELECT json_agg(json_build_object('name',woi.name,'quantity',woi.quantity,'unit_price',woi.unit_price))
+           COALESCE((SELECT json_agg(json_build_object(
+               'id', woi.id, 'productId', woi.product_id, 'name', woi.name,
+               'quantity', woi.quantity, 'unitPrice', woi.unit_price,
+               'mlItemId', woi.ml_item_id, 'variantLabel', woi.ml_variant_label,
+               'permalink', woi.ml_permalink, 'matchMethod', woi.ml_match_method
+             ) ORDER BY woi.id)
              FROM web_order_items woi WHERE woi.web_order_id = wo.id), '[]') AS items
     FROM web_orders wo
     JOIN sellers s ON s.id = wo.seller_id
     WHERE ${conditions.join(" AND ")}
     ORDER BY wo.created_at DESC`, params);
   return rows;
+}
+
+export async function getProductForAssign(productId) {
+  const { rows } = await pool.query(`SELECT id, name, costo_usd FROM products WHERE id = $1`, [productId]);
+  return rows[0] || null;
+}
+
+// Ítem puntual de un pedido de ML sin producto asignado — junto con lo necesario para
+// recalcular su costo (plan del vendedor, costo_usd del producto elegido) al asignarlo a mano.
+export async function getUnassignedMlOrderItem(itemId) {
+  const { rows } = await pool.query(
+    `SELECT woi.id, woi.web_order_id, woi.quantity, woi.ml_item_id,
+            wo.seller_id, s.plan_id
+     FROM web_order_items woi
+     JOIN web_orders wo ON wo.id = woi.web_order_id
+     JOIN sellers s ON s.id = wo.seller_id
+     WHERE woi.id = $1 AND woi.product_id IS NULL AND wo.channel = 'mercadolibre'`,
+    [itemId]
+  );
+  return rows[0] || null;
+}
+
+// Asigna a mano el producto real de un ítem que llegó sin poder resolverse solo — actualiza el
+// ítem, suma el costo recién calculado a la deuda del pedido, y recuerda la publicación en
+// ml_listings para que la próxima venta de ese mismo ml_item_id resuelva directo.
+export async function assignMlOrderItemProduct(itemId, { productId, productName, unitCost, sellerId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: itemRows } = await client.query(
+      `UPDATE web_order_items
+       SET product_id = $1, name = $2, unit_cost = $3, ml_match_method = 'manual'
+       WHERE id = $4
+       RETURNING web_order_id, quantity, ml_item_id`,
+      [productId, productName, unitCost, itemId]
+    );
+    const item = itemRows[0];
+    if (!item) { await client.query("ROLLBACK"); return null; }
+
+    const costAdded = unitCost * item.quantity;
+    const { rows: orderRows } = await client.query(
+      `UPDATE web_orders SET ml_cost_amount = ml_cost_amount + $1 WHERE id = $2 RETURNING id`,
+      [costAdded, item.web_order_id]
+    );
+
+    if (item.ml_item_id) {
+      const { rows: existing } = await client.query(
+        `SELECT 1 FROM ml_listings WHERE ml_item_id = $1`,
+        [item.ml_item_id]
+      );
+      if (!existing[0]) {
+        await client.query(
+          `INSERT INTO ml_listings (seller_id, product_id, ml_item_id, status)
+           VALUES ($1, $2, $3, 'active')`,
+          [sellerId, productId, item.ml_item_id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    return orderRows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Todos los pedidos de ML todavía sin cobrar, de TODOS los vendedores — para calcular en JS

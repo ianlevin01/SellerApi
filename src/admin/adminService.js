@@ -3,6 +3,8 @@ import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
 import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged, sendOrderPackagedToSeller, sendOrderShipped, sendOrderShippedToSeller } from "../email/buyerEmails.js";
 import * as mlWalletService from "../ml/mlWalletService.js";
 import { getPlanMlGraceHours } from "../utils/sellerPlan.js";
+import { getCotizacion } from "../payouts/payoutsRepository.js";
+import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -179,6 +181,29 @@ export async function getMlWalletOverview() {
 // su propia pestaña Cobro (movimientos + intentos de cobro fallidos, ya unificados).
 export async function getMlSellerHistory(sellerId) {
   return mlWalletService.getHistory(sellerId);
+}
+
+// Asignación manual del producto real de un ítem de ML que no se pudo resolver solo (ni por
+// ml_item_id directo ni por family_name/título — ver mlWebhookController.resolveUnmatchedItem).
+// Recién acá se calcula y suma la deuda de ese ítem — hasta este momento quedó en $0 a propósito.
+export async function assignMlOrderItemProduct(itemId, productId) {
+  if (!productId) throw { status: 400, message: "Falta el producto a asignar" };
+
+  const item = await repo.getUnassignedMlOrderItem(itemId);
+  if (!item) throw { status: 404, message: "Ítem no encontrado o ya tiene un producto asignado" };
+
+  const product = await repo.getProductForAssign(productId);
+  if (!product) throw { status: 404, message: "Producto no encontrado" };
+
+  const cotizacion = await getCotizacion();
+  const platformPct = getSellerPlatformPct(0);
+  const unitCost = calcShownCost(product.costo_usd, cotizacion, platformPct, item.plan_id);
+
+  const result = await repo.assignMlOrderItemProduct(itemId, {
+    productId, productName: product.name, unitCost, sellerId: item.seller_id,
+  });
+  if (!result) throw { status: 404, message: "No se pudo asignar — el ítem puede haber cambiado" };
+  return { message: "Producto asignado y deuda generada" };
 }
 
 export async function updateProductDimensions(productId, body) {

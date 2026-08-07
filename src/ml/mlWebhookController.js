@@ -11,6 +11,46 @@ import { tryUseSellerStock, markItemSellerStock } from "../purchase/purchaseRepo
 
 const APP_ID = process.env.ML_CLIENT_ID;
 
+// "Color: Rosa" a partir de variation_attributes — ML lo manda tanto para variantes clásicas
+// (variation_id real) como para publicaciones "familia" (una por color, ver resolveUnmatchedItem
+// más abajo), así que sirve para marcar la venta como variante en los dos casos.
+function formatVariantLabel(variationAttributes) {
+  if (!variationAttributes?.length) return null;
+  return variationAttributes.map(a => `${a.name}: ${a.value_name}`).join(", ");
+}
+
+// Cuando ml_item_id no está en ml_listings (Mercado Libre migró una publicación con variantes
+// internas a una "familia" de publicaciones nuevas, una por color/talle — ver conversación de
+// diagnóstico del pedido #237) intenta reconectar automáticamente comparando el título real que
+// tenía la publicación original contra el family_name que trae la nueva. Nunca adivina por el
+// nombre interno del producto en Ventaz (puede no tener nada que ver con el título de ML) — si
+// hay más de un candidato o ninguno, no asigna nada y deja que un admin lo haga a mano.
+async function resolveUnmatchedItem(token, sellerId, mlItemId) {
+  const mlItem = await svc.getItem(token, mlItemId).catch(() => null);
+  if (!mlItem) return { mlItem: null, productId: null, matchMethod: null };
+
+  const { rows: candidates } = await pool.query(
+    `SELECT ml_item_id, product_id FROM ml_listings
+     WHERE seller_id = $1 AND ml_combo_id IS NULL AND ml_item_id != $2
+     ORDER BY updated_at DESC LIMIT 150`,
+    [sellerId, mlItemId]
+  );
+
+  const matches = new Set();
+  for (const c of candidates) {
+    const candItem = await svc.getItem(token, c.ml_item_id).catch(() => null);
+    if (!candItem) continue;
+    const sameFamily = mlItem.family_id && candItem.family_id === mlItem.family_id;
+    const titleMatchesFamilyName = mlItem.family_name && candItem.title === mlItem.family_name;
+    if (sameFamily || titleMatchesFamilyName) matches.add(c.product_id);
+  }
+
+  if (matches.size === 1) {
+    return { mlItem, productId: [...matches][0], matchMethod: "family_name" };
+  }
+  return { mlItem, productId: null, matchMethod: null };
+}
+
 // POST /seller/ml/webhook — ML no firma las notificaciones (a diferencia de MP), son un
 // ping liviano; la seguridad real está en que hay que ir a buscar el recurso con un
 // access_token válido, así que alcanza con validar que sea nuestra aplicación.
@@ -79,6 +119,11 @@ export async function processOrder(conn, order) {
   if (!claimed[0]) return; // ya procesado (o procesándose en este mismo instante) por otra notificación
   const webOrderId = claimed[0].id;
 
+  // Necesario acá (no solo en handleOrder) para resolver ítems sin match y para consultar el
+  // shipment más abajo — se re-pide en vez de recibirlo como parámetro porque processOrder()
+  // también se llama directo desde scripts/simulateMlSale.mjs con un pedido armado a mano.
+  const token = await getValidToken(conn.seller_id);
+
   const cotizacion = await getCotizacion();
   const totalSalesArs = 0; // TODO: ver si conviene usar ventas históricas del seller para el tier de platformPct
   const platformPct = getSellerPlatformPct(totalSalesArs);
@@ -87,12 +132,39 @@ export async function processOrder(conn, order) {
   let costTotal = 0;
   const items = [];
   for (const item of order.order_items || []) {
+    const variantLabel = formatVariantLabel(item.item.variation_attributes);
     const { rows: listingRows } = await pool.query(
-      `SELECT product_id, ml_combo_id FROM ml_listings WHERE ml_item_id = $1`,
+      `SELECT product_id, ml_combo_id, permalink FROM ml_listings WHERE ml_item_id = $1`,
       [item.item.id]
     );
-    const listing = listingRows[0];
-    if (!listing) continue;
+    let listing = listingRows[0];
+    let permalink = listing?.permalink || null;
+    let matchMethod = null;
+
+    if (!listing) {
+      const resolved = await resolveUnmatchedItem(token, conn.seller_id, item.item.id).catch(() => ({ mlItem: null, productId: null, matchMethod: null }));
+      permalink = resolved.mlItem?.permalink || null;
+      if (resolved.productId) {
+        listing = { product_id: resolved.productId, ml_combo_id: null };
+        matchMethod = resolved.matchMethod;
+        // Recuerda la publicación nueva para que la próxima venta de este mismo ml_item_id
+        // (o cualquier otra que ya haya pasado por acá) resuelva directo, sin repetir el
+        // escaneo de candidatos contra la API de ML.
+        await repo.createListing(conn.seller_id, {
+          productId: resolved.productId, mlItemId: item.item.id, status: "active", permalink,
+        }).catch(() => {});
+      } else {
+        // No se pudo reconectar con ningún producto — se guarda igual como "sin asignar"
+        // (product_id null, sin costo/deuda) con el link a la publicación real y la variante,
+        // para que un admin lo asigne a mano desde AdminPanel y ahí sí se genere la deuda.
+        items.push({
+          productId: null, name: resolved.mlItem?.title || item.item.title,
+          quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: 0,
+          mlItemId: item.item.id, variantLabel, permalink, matchMethod: null,
+        });
+        continue;
+      }
+    }
 
     if (listing.ml_combo_id) {
       // Un combo vendido se reparte en varias filas de web_order_items (una por producto que
@@ -117,7 +189,10 @@ export async function processOrder(conn, order) {
         costTotal += productUnitCost * chargeableQty;
         const share = comboUnitCost > 0 ? (productUnitCost * cp.quantity) / comboUnitCost : 0;
         const unitPrice = qty > 0 ? (item.unit_price * item.quantity * share) / qty : 0;
-        items.push({ productId: cp.product_id, name: cp.name, quantity: qty, unitPrice, sellerStockUsed: reserveUsed });
+        items.push({
+          productId: cp.product_id, name: cp.name, quantity: qty, unitPrice, sellerStockUsed: reserveUsed,
+          mlItemId: item.item.id, variantLabel, permalink, matchMethod,
+        });
       }
     } else {
       const { rows } = await pool.query(
@@ -130,27 +205,41 @@ export async function processOrder(conn, order) {
       const reserveUsed = await tryUseSellerStock(conn.seller_id, product.product_id, item.quantity);
       const chargeableQty = item.quantity - reserveUsed;
       costTotal += unitCost * chargeableQty;
-      items.push({ productId: product.product_id, name: product.name, quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: reserveUsed });
+      items.push({
+        productId: product.product_id, name: product.name, quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: reserveUsed,
+        mlItemId: item.item.id, variantLabel, permalink, matchMethod,
+      });
     }
+  }
+
+  // logistic_type real del envío (self_service = Flex, drop_off/xd_drop_off/cross_docking =
+  // Correo) — se guarda acá en vez de pedirlo recién al imprimir etiquetas, para que AdminPanel
+  // pueda separar Correo/Flex sin pegarle a la API de ML en cada carga del panel.
+  let logisticType = null;
+  if (order.shipping?.id) {
+    const shipment = await svc.getShipment(token, order.shipping.id).catch(() => null);
+    logisticType = shipment?.logistic_type || null;
   }
 
   const buyer = order.buyer || {};
   const { rows: updated } = await pool.query(
     `UPDATE web_orders
      SET customer_name = $2, customer_email = $3, customer_phone = $4, total = $5,
-         ml_shipment_id = $6, ml_cost_amount = $7
+         ml_shipment_id = $6, ml_cost_amount = $7, ml_logistic_type = $8
      WHERE id = $1
      RETURNING numero`,
     [webOrderId, buyer.nickname || buyer.first_name || "Comprador ML", buyer.email || null,
      buyer.phone?.number || null, order.total_amount,
-     order.shipping?.id ? String(order.shipping.id) : null, costTotal]
+     order.shipping?.id ? String(order.shipping.id) : null, costTotal, logisticType]
   );
 
   for (const item of items) {
     await pool.query(
-      `INSERT INTO web_order_items (web_order_id, product_id, name, quantity, unit_price)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [webOrderId, item.productId, item.name, item.quantity, item.unitPrice]
+      `INSERT INTO web_order_items
+         (web_order_id, product_id, name, quantity, unit_price, ml_item_id, ml_variant_label, ml_permalink, ml_match_method)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [webOrderId, item.productId, item.name, item.quantity, item.unitPrice,
+       item.mlItemId || null, item.variantLabel || null, item.permalink || null, item.matchMethod || null]
     );
     if (item.sellerStockUsed > 0) {
       await markItemSellerStock(webOrderId, item.productId, item.sellerStockUsed);
