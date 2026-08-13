@@ -75,15 +75,18 @@ async function checkStock() {
       const available   = Number(l.available_stock);
       const outOfStock  = isExpensive ? available <= 0 : available < 10;
 
-      if (outOfStock && l.status === "active") {
-        await listingSvc.pauseListing(l.seller_id, l.ml_item_id, "stock");
-        await sendMlStockEmail({
-          sellerEmail: l.seller_email, sellerName: l.seller_name,
-          productName: l.product_name, productCode: l.product_code || l.product_id,
-          permalink: l.permalink, mlItemId: l.ml_item_id, kind: "paused",
-        });
-        console.log(`[mlStockSync] pausado ${l.ml_item_id} — stock efectivo ${available}`);
-      } else if (!outOfStock && l.status === "paused" && l.pause_reason === "stock") {
+      // Pausado automático por falta de stock DESACTIVADO a propósito (pedido explícito) —
+      // queda el código armado para reactivarlo más adelante, por ahora no pausa nada.
+      // if (outOfStock && l.status === "active") {
+      //   await listingSvc.pauseListing(l.seller_id, l.ml_item_id, "stock");
+      //   await sendMlStockEmail({
+      //     sellerEmail: l.seller_email, sellerName: l.seller_name,
+      //     productName: l.product_name, productCode: l.product_code || l.product_id,
+      //     permalink: l.permalink, mlItemId: l.ml_item_id, kind: "paused",
+      //   });
+      //   console.log(`[mlStockSync] pausado ${l.ml_item_id} — stock efectivo ${available}`);
+      // } else
+      if (!outOfStock && l.status === "paused" && l.pause_reason === "stock") {
         await listingSvc.reactivateListing(l.seller_id, l.ml_item_id);
         await listingSvc.syncStockToMl(l.seller_id, l.ml_item_id, available);
         await sendMlStockEmail({
@@ -129,15 +132,18 @@ async function checkComboStock() {
       const isExpensive = comboPrecio1 > 100000;
       const outOfStock  = isExpensive ? available <= 0 : available < 10;
 
-      if (outOfStock && c.status === "active") {
-        await listingSvc.pauseListing(c.seller_id, c.ml_item_id, "stock");
-        await sendMlStockEmail({
-          sellerEmail: c.seller_email, sellerName: c.seller_name,
-          productName: c.combo_name, productCode: null,
-          permalink: c.permalink, mlItemId: c.ml_item_id, kind: "paused",
-        });
-        console.log(`[mlStockSync] combo pausado ${c.ml_item_id} — stock efectivo ${available}`);
-      } else if (!outOfStock && c.status === "paused" && c.pause_reason === "stock") {
+      // Pausado automático por falta de stock DESACTIVADO a propósito (pedido explícito) —
+      // queda el código armado para reactivarlo más adelante, por ahora no pausa nada.
+      // if (outOfStock && c.status === "active") {
+      //   await listingSvc.pauseListing(c.seller_id, c.ml_item_id, "stock");
+      //   await sendMlStockEmail({
+      //     sellerEmail: c.seller_email, sellerName: c.seller_name,
+      //     productName: c.combo_name, productCode: null,
+      //     permalink: c.permalink, mlItemId: c.ml_item_id, kind: "paused",
+      //   });
+      //   console.log(`[mlStockSync] combo pausado ${c.ml_item_id} — stock efectivo ${available}`);
+      // } else
+      if (!outOfStock && c.status === "paused" && c.pause_reason === "stock") {
         await listingSvc.reactivateListing(c.seller_id, c.ml_item_id);
         await listingSvc.syncStockToMl(c.seller_id, c.ml_item_id, available);
         await sendMlStockEmail({
