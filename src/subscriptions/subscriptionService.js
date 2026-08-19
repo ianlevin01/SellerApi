@@ -147,28 +147,19 @@ async function ensureMpPlanId(plan) {
   return res.data.id;
 }
 
-// Preapproval personal del vendedor — a diferencia del init_point genérico del plan (que
-// reusaba el mismo checkout para todos y dejaba que MP completara payer_email con lo que sea
-// que detecte en el login), esto crea una suscripción propia con payer_email y
-// external_reference explícitos desde el arranque. Mercado Pago señaló que la falta de datos
-// consistentes del pagador puede hacer que el débito automático no avance correctamente — esto
-// lo resuelve de raíz, y de paso external_reference = sellerId nos da una forma confiable de
-// encontrar al vendedor en el webhook sin depender de payer_email.
-async function createPersonalPreapproval(mpPlanId, plan, sellerId, sellerEmail) {
-  console.log(`[sub] creando preapproval personal seller="${sellerId}" plan_mp="${mpPlanId}" payer_email="${sellerEmail}"`);
-  const res = await axios.post(
-    `${MP_BASE}/preapproval`,
-    {
-      preapproval_plan_id: mpPlanId,
-      reason:              `${plan.name} Ventaz`,
-      external_reference:  sellerId,
-      payer_email:         sellerEmail,
-      back_url:            getBackUrl(),
-    },
-    { headers: mpHeaders() }
-  );
-  console.log(`[sub] preapproval creado id="${res.data.id}" status="${res.data.status}"`);
-  return res.data.init_point;
+// Checkout hosteado del plan — antes se intentaba crear una "preapproval personal" vía API
+// (POST /preapproval con preapproval_plan_id + payer_email/external_reference, sin card_token_id)
+// para prellenar el pagador y tener un external_reference confiable para el webhook. Eso rompía
+// con "card_token_id is required": la documentación de MP es explícita en que una suscripción
+// con preapproval_plan_id asociado SOLO se puede crear vía API si se manda card_token_id (y
+// status "authorized" de una) — no existe una variante de esa llamada que devuelva un checkout
+// para que el vendedor elija tarjeta después, nosotros no tokenizamos tarjeta de nuestro lado.
+// La alternativa real que sí funciona sin tokenizar nada es mandar al vendedor directo al
+// checkout propio del plan (la URL que arma MP con el mismo preapproval_plan_id) — ahí elige
+// tarjeta él mismo del lado de MP. Se pierde el prellenado de payer_email/external_reference,
+// pero el webhook ya tenía (y sigue teniendo) fallback por payer_email para este caso exacto.
+function planCheckoutUrl(mpPlanId) {
+  return `https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=${mpPlanId}`;
 }
 
 // ── Crear suscripción para un vendedor ───────────────────────
@@ -180,17 +171,15 @@ export async function createSubscription(sellerId, sellerEmail, planId) {
   const plan = await repo.getPlanById(planId);
   if (!plan) throw { status: 404, message: "Plan no encontrado" };
 
-  // Primero crear el plan/preapproval en MP — si falla, no ensuciamos la BD
-  const mpPlanId  = await ensureMpPlanId(plan);
-  const initPoint = await createPersonalPreapproval(mpPlanId, plan, sellerId, sellerEmail);
+  // Primero crear el plan en MP — si falla, no ensuciamos la BD
+  const mpPlanId = await ensureMpPlanId(plan);
 
-  // Recién después guardar pending_plan_id para que el webhook lo use
   await repo.updateSellerSubscription(sellerId, { pending_plan_id: planId });
 
   // Notificar al equipo que alguien inició el proceso de compra
   notifyPlanAttempt(sellerId, plan.name || planId).catch(() => {});
 
-  return { init_point: initPoint };
+  return { init_point: planCheckoutUrl(mpPlanId) };
 }
 
 // ── Downgrade programado ─────────────────────────────────────
