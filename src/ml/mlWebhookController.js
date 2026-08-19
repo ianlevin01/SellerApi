@@ -19,12 +19,14 @@ function formatVariantLabel(variationAttributes) {
   return variationAttributes.map(a => `${a.name}: ${a.value_name}`).join(", ");
 }
 
-// Cuando ml_item_id no está en ml_listings (Mercado Libre migró una publicación con variantes
-// internas a una "familia" de publicaciones nuevas, una por color/talle — ver conversación de
-// diagnóstico del pedido #237) intenta reconectar automáticamente comparando el título real que
-// tenía la publicación original contra el family_name que trae la nueva. Nunca adivina por el
-// nombre interno del producto en Ventaz (puede no tener nada que ver con el título de ML) — si
-// hay más de un candidato o ninguno, no asigna nada y deja que un admin lo haga a mano.
+// Cuando ml_item_id no está en ml_listings, la publicación NUNCA se hizo desde Ventaz (puede
+// ser una publicación hecha directo en ML por el vendedor, para un producto que también
+// tengamos en catálogo — confirmado con el pedido #237, "Monopatín", nunca publicado por
+// Ventaz). Acá solo se intenta SUGERIR de qué producto podría tratarse, comparando el título
+// real que tenía alguna publicación registrada del vendedor contra el family_name/título de la
+// nueva — nunca adivina por el nombre interno del producto en Ventaz (puede no tener nada que
+// ver con el título de ML). Es solo una sugerencia para que un admin la revise y confirme a
+// mano — nunca asigna ni genera deuda sola (ver processOrder más abajo).
 async function resolveUnmatchedItem(token, sellerId, mlItemId) {
   const mlItem = await svc.getItem(token, mlItemId).catch(() => null);
   if (!mlItem) return { mlItem: null, productId: null, matchMethod: null };
@@ -75,7 +77,7 @@ export async function handleWebhook(req, res) {
       case "items":      await handleItem(conn, resource);    break;
       case "questions":  await handleQuestion(conn, resource); break;
       case "claims":     await handleClaim(conn, resource);   break;
-      case "shipments":  /* solo tracking informativo — se resuelve con jobs/shippingTracker.js */ break;
+      case "shipments":  await handleShipmentUpdate(conn, resource); break;
       case "public_offers": /* ofertas relámpago — TODO fase 2 */ break;
       default: break;
     }
@@ -142,28 +144,26 @@ export async function processOrder(conn, order) {
     let matchMethod = null;
 
     if (!listing) {
+      // No está en ml_listings — esta publicación NUNCA se hizo desde Ventaz (el vendedor la
+      // creó directo en Mercado Libre, para un producto que puede que también tengamos en
+      // catálogo). A propósito NUNCA genera deuda ni se guarda como propia acá, aunque se
+      // pueda sugerir un producto comparando el título — solo sirve para que un admin la
+      // identifique, la mire (link a la publicación) y, si corresponde, la confirme a mano
+      // desde AdminPanel. Recién ahí (ver adminService.assignMlOrderItemProduct) se genera la
+      // deuda y se recuerda la publicación para el futuro — nunca de forma automática.
       const resolved = await resolveUnmatchedItem(token, conn.seller_id, item.item.id).catch(() => ({ mlItem: null, productId: null, matchMethod: null }));
-      permalink = resolved.mlItem?.permalink || null;
+      let suggestedName = resolved.mlItem?.title || item.item.title;
       if (resolved.productId) {
-        listing = { product_id: resolved.productId, ml_combo_id: null };
-        matchMethod = resolved.matchMethod;
-        // Recuerda la publicación nueva para que la próxima venta de este mismo ml_item_id
-        // (o cualquier otra que ya haya pasado por acá) resuelva directo, sin repetir el
-        // escaneo de candidatos contra la API de ML.
-        await repo.createListing(conn.seller_id, {
-          productId: resolved.productId, mlItemId: item.item.id, status: "active", permalink,
-        }).catch(() => {});
-      } else {
-        // No se pudo reconectar con ningún producto — se guarda igual como "sin asignar"
-        // (product_id null, sin costo/deuda) con el link a la publicación real y la variante,
-        // para que un admin lo asigne a mano desde AdminPanel y ahí sí se genere la deuda.
-        items.push({
-          productId: null, name: resolved.mlItem?.title || item.item.title,
-          quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: 0,
-          mlItemId: item.item.id, variantLabel, permalink, matchMethod: null,
-        });
-        continue;
+        const { rows: pRows } = await pool.query(`SELECT name FROM products WHERE id = $1`, [resolved.productId]);
+        if (pRows[0]) suggestedName = pRows[0].name;
       }
+      items.push({
+        productId: resolved.productId, name: suggestedName,
+        quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: 0,
+        mlItemId: item.item.id, variantLabel, permalink: resolved.mlItem?.permalink || null,
+        matchMethod: resolved.productId ? "family_name" : null,
+      });
+      continue;
     }
 
     if (listing.ml_combo_id) {
@@ -214,23 +214,43 @@ export async function processOrder(conn, order) {
 
   // logistic_type real del envío (self_service = Flex, drop_off/xd_drop_off/cross_docking =
   // Correo) — se guarda acá en vez de pedirlo recién al imprimir etiquetas, para que AdminPanel
-  // pueda separar Correo/Flex sin pegarle a la API de ML en cada carga del panel.
+  // pueda separar Correo/Flex sin pegarle a la API de ML en cada carga del panel. Junto con el
+  // logistic_type, se guarda también el SLA (expected_date/status) — la fecha límite real para
+  // despachar, que define Mercado Libre por zona y cambia día a día (ver mlService.getShipmentSla).
   let logisticType = null;
+  let dispatchExpectedDate = null;
+  let dispatchSlaStatus = null;
+  let shipmentStatus = null;
+  let shipmentSubstatus = null;
+  let dateShipped = null;
+  let dispatched = false;
   if (order.shipping?.id) {
     const shipment = await svc.getShipment(token, order.shipping.id).catch(() => null);
     logisticType = shipment?.logistic_type || null;
+    shipmentStatus = shipment?.status || null;
+    shipmentSubstatus = shipment?.substatus || null;
+    dateShipped = shipment?.status_history?.date_shipped || null;
+    dispatched = svc.isShipmentDispatched(shipment);
+    const sla = await svc.getShipmentSla(token, order.shipping.id).catch(() => null);
+    dispatchExpectedDate = sla?.expected_date || null;
+    dispatchSlaStatus = sla?.status || null;
   }
 
   const buyer = order.buyer || {};
   const { rows: updated } = await pool.query(
     `UPDATE web_orders
      SET customer_name = $2, customer_email = $3, customer_phone = $4, total = $5,
-         ml_shipment_id = $6, ml_cost_amount = $7, ml_logistic_type = $8
+         ml_shipment_id = $6, ml_cost_amount = $7, ml_logistic_type = $8,
+         ml_dispatch_expected_date = $9, ml_dispatch_sla_status = $10,
+         ml_shipment_status = $11, ml_shipment_substatus = $12, ml_date_shipped = $13,
+         ml_dispatched_at = CASE WHEN $14 THEN now() ELSE NULL END
      WHERE id = $1
      RETURNING numero`,
     [webOrderId, buyer.nickname || buyer.first_name || "Comprador ML", buyer.email || null,
      buyer.phone?.number || null, order.total_amount,
-     order.shipping?.id ? String(order.shipping.id) : null, costTotal, logisticType]
+     order.shipping?.id ? String(order.shipping.id) : null, costTotal, logisticType,
+     dispatchExpectedDate, dispatchSlaStatus,
+     shipmentStatus, shipmentSubstatus, dateShipped, dispatched]
   );
 
   for (const item of items) {
@@ -260,6 +280,29 @@ async function handleItem(conn, resourcePath) {
   const item = await svc.getItem(token, itemId).catch(() => null);
   if (!item) return;
   await repo.updateListingStatus(itemId, item.status).catch(() => {});
+}
+
+// ML avisa acá cada vez que cambia el estado de un envío — es la señal en tiempo real de que
+// un paquete salió físicamente del depósito (ver svc.isShipmentDispatched). Antes este tópico
+// no hacía nada; sin esto, el panel de admin solo se enteraba del despacho real recién cuando
+// alguien volvía a abrir la pestaña (el backfill de adminService sigue estando, como red por
+// si se pierde alguna notificación).
+async function handleShipmentUpdate(conn, resourcePath) {
+  const shipmentId = resourcePath.split("/").pop();
+  const token = await getValidToken(conn.seller_id);
+  if (!token) return;
+  const shipment = await svc.getShipment(token, shipmentId).catch(() => null);
+  if (!shipment) return;
+
+  const dispatched = svc.isShipmentDispatched(shipment);
+  await pool.query(
+    `UPDATE web_orders
+     SET ml_shipment_status = $1, ml_shipment_substatus = $2, ml_date_shipped = $3,
+         ml_dispatched_at = CASE WHEN $4 AND ml_dispatched_at IS NULL THEN now() ELSE ml_dispatched_at END
+     WHERE ml_shipment_id = $5 AND channel = 'mercadolibre'`,
+    [shipment.status || null, shipment.substatus || null, shipment.status_history?.date_shipped || null,
+     dispatched, String(shipmentId)]
+  );
 }
 
 async function handleQuestion(conn, resourcePath) {

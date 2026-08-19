@@ -5,6 +5,8 @@ import * as mlWalletService from "../ml/mlWalletService.js";
 import { getPlanMlGraceHours } from "../utils/sellerPlan.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getValidToken } from "../ml/mlTokenService.js";
+import * as mlSvc from "../ml/mlService.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -124,6 +126,90 @@ export async function getSalesReport(filters) {
   return repo.getSalesReport(filters);
 }
 
+// El webhook de la orden puede llegar antes de que Mercado Libre termine de asignarle
+// logistic_type/SLA al envío — como esa orden nunca se vuelve a tocar (ver mlWebhookController,
+// el ON CONFLICT DO NOTHING solo procesa la primera notificación), queda en null para siempre
+// si no se completa acá. Mismo patrón que ya usa mlLabelService para ml_shipment_id: se
+// completa recién cuando hace falta (acá, al listar) y se guarda para no volver a pedirlo.
+async function backfillMissingShipmentInfo(rows) {
+  const pending = rows.filter(r => (!r.ml_logistic_type || !r.ml_dispatch_expected_date) && r.ml_shipment_id && !r.ml_dispatched_at);
+  if (pending.length === 0) return;
+
+  const tokenBySeller = new Map();
+  for (const row of pending) {
+    try {
+      if (!tokenBySeller.has(row.seller_id)) {
+        tokenBySeller.set(row.seller_id, await getValidToken(row.seller_id));
+      }
+      const token = tokenBySeller.get(row.seller_id);
+      if (!token) continue;
+
+      if (!row.ml_logistic_type) {
+        const shipment = await mlSvc.getShipment(token, row.ml_shipment_id).catch(() => null);
+        if (shipment?.logistic_type) {
+          row.ml_logistic_type = shipment.logistic_type;
+          await repo.setOrderLogisticType(row.id, shipment.logistic_type);
+        }
+      }
+      if (!row.ml_dispatch_expected_date) {
+        const sla = await mlSvc.getShipmentSla(token, row.ml_shipment_id).catch(() => null);
+        if (sla?.expected_date) {
+          row.ml_dispatch_expected_date = sla.expected_date;
+          row.ml_dispatch_sla_status = sla.status || null;
+          await repo.setOrderDispatchSla(row.id, { expectedDate: sla.expected_date, slaStatus: sla.status || null });
+        }
+      }
+    } catch (err) {
+      console.error(`[admin] no se pudo completar datos de envío del pedido ${row.id}:`, err.message);
+    }
+  }
+}
+
+// "Día calendario" (America/Argentina/Buenos_Aires) de una fecha — para agrupar pedidos por
+// el día en que Mercado Libre exige que salgan del depósito, sin importar la hora exacta.
+function toArgDateString(date) {
+  if (!date) return null;
+  return new Date(date).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+}
+
+// A diferencia de logistic_type/SLA (que una vez asignados casi no cambian), el estado de
+// despacho SÍ hay que re-chequearlo mientras el pedido siga sin despachar — no alcanza con
+// completarlo una sola vez. El webhook de "shipments" ya lo mantiene al día en tiempo real
+// (ver mlWebhookController.handleShipmentUpdate); esto es la red de seguridad para
+// notificaciones perdidas, y solo pega contra pedidos todavía-no-despachados — los que ya
+// están despachados no se vuelven a chequear nunca más.
+async function refreshDispatchStatus(rows) {
+  const pending = rows.filter(r => !r.ml_dispatched_at && r.ml_shipment_id).slice(0, 200);
+  if (pending.length === 0) return;
+
+  const tokenBySeller = new Map();
+  for (const row of pending) {
+    try {
+      if (!tokenBySeller.has(row.seller_id)) {
+        tokenBySeller.set(row.seller_id, await getValidToken(row.seller_id));
+      }
+      const token = tokenBySeller.get(row.seller_id);
+      if (!token) continue;
+
+      const shipment = await mlSvc.getShipment(token, row.ml_shipment_id).catch(() => null);
+      if (!shipment) continue;
+
+      const dispatched = mlSvc.isShipmentDispatched(shipment);
+      row.ml_shipment_status = shipment.status || null;
+      row.ml_shipment_substatus = shipment.substatus || null;
+      row.ml_date_shipped = shipment.status_history?.date_shipped || null;
+      if (dispatched) row.ml_dispatched_at = new Date().toISOString();
+
+      await repo.setOrderShipmentStatus(row.id, {
+        status: row.ml_shipment_status, substatus: row.ml_shipment_substatus,
+        dateShipped: row.ml_date_shipped, dispatched,
+      });
+    } catch (err) {
+      console.error(`[admin] no se pudo refrescar el estado de despacho del pedido ${row.id}:`, err.message);
+    }
+  }
+}
+
 // Marca cada venta con `shippable` — el bloqueo es por CUENTA, no por pedido puntual: si el
 // vendedor tiene ALGUNA venta pendiente que ya superó su ventana de gracia sin cobrarse, se
 // bloquean TODAS sus ventas pendientes (incluso las recientes, todavía dentro de su propia
@@ -131,6 +217,8 @@ export async function getSalesReport(filters) {
 // acá coincida exactamente con lo que después se puede/no se puede imprimir.
 export async function getMlSales(filters) {
   const rows = await repo.getMlSales(filters);
+  await backfillMissingShipmentInfo(rows);
+  await refreshDispatchStatus(rows);
 
   const matureBySeller = new Set();
   const now = Date.now();
@@ -141,11 +229,29 @@ export async function getMlSales(filters) {
     if (ageHours > graceHours) matureBySeller.add(row.seller_id);
   }
 
-  return rows.map(row => ({
-    ...row,
-    shippable: row.ml_charge_status === "charged" || !matureBySeller.has(row.seller_id),
-  }));
+  const today = toArgDateString(new Date());
+
+  return rows.map(row => {
+    const dispatchDay = toArgDateString(row.ml_dispatch_expected_date);
+    const isDispatched = !!row.ml_dispatched_at;
+    return {
+      ...row,
+      shippable: row.ml_charge_status === "charged" || !matureBySeller.has(row.seller_id),
+      // Al menos un ítem sin confirmar (nunca se publicó desde Ventaz, ni asignado a mano
+      // todavía) — "family_name" es solo una sugerencia por título, no una asignación real.
+      // Estos pedidos no generan deuda y se muestran aparte, no mezclados con los que sí.
+      needsProductReview: (row.items || []).some(i => !i.productId || i.matchMethod === "family_name"),
+      dispatchDay,
+      isDispatched,
+      // "Pendiente de hoy" = hay que despacharlo hoy o ya se pasó la fecha límite (atrasado) y
+      // todavía no se marcó como despachado — un atrasado es más urgente, no menos, así que
+      // entra igual en la pestaña del día.
+      needsDispatchToday: !isDispatched && !!dispatchDay && dispatchDay <= today,
+      dispatchOverdue: !isDispatched && !!dispatchDay && dispatchDay < today,
+    };
+  });
 }
+
 
 // Pestaña "Cobros y deudas" — un renglón por vendedor conectado a ML con saldo/deuda/tarjeta.
 export async function getMlWalletOverview() {
@@ -183,9 +289,11 @@ export async function getMlSellerHistory(sellerId) {
   return mlWalletService.getHistory(sellerId);
 }
 
-// Asignación manual del producto real de un ítem de ML que no se pudo resolver solo (ni por
-// ml_item_id directo ni por family_name/título — ver mlWebhookController.resolveUnmatchedItem).
-// Recién acá se calcula y suma la deuda de ese ítem — hasta este momento quedó en $0 a propósito.
+// Confirmación/asignación manual del producto real de un ítem de ML que no está publicado
+// desde Ventaz — sea porque no había ninguna sugerencia, o porque el sistema sugirió un
+// producto por título (family_name, ver mlWebhookController.resolveUnmatchedItem) y un admin
+// lo confirma acá. En ambos casos, recién acá se calcula y suma la deuda de ese ítem — hasta
+// este momento quedó en $0 a propósito, nunca se cobra sola una publicación externa a Ventaz.
 export async function assignMlOrderItemProduct(itemId, productId) {
   if (!productId) throw { status: 400, message: "Falta el producto a asignar" };
 

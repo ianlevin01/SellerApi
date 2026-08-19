@@ -134,7 +134,13 @@ export async function getCategoryPath(categoryId) {
 // nunca se le muestran al vendedor. El resto de los atributos "hidden"/"read_only" (código
 // hazmat, características químicas, campos que calcula ML solo, etc.) tampoco son para que
 // el vendedor complete a mano — Mercado Libre los marca así en su propia API.
-const NEVER_SHOW_ATTRS = new Set(["GTIN", "EMPTY_GTIN_REASON"]);
+//
+// VALUE_ADDED_TAX (IVA) e IMPORT_DUTY (Impuesto interno) son datos fiscales del propio
+// vendedor (según su condición ante IVA — Responsable Inscripto, Monotributista, etc.) y del
+// producto puntual — Ventaz no tiene forma de saber ese dato por el vendedor, así que no tiene
+// sentido pedírselo en el wizard de publicación. Si la categoría lo exige como obligatorio, el
+// mecanismo genérico de atributo faltante (ver createMlItem) lo va a pedir en su momento.
+const NEVER_SHOW_ATTRS = new Set(["GTIN", "EMPTY_GTIN_REASON", "VALUE_ADDED_TAX", "IMPORT_DUTY"]);
 
 // Los atributos "number_unit" (LENGTH, WEIGHT, MIN_RECOMMENDED_AGE, etc.) cada uno tiene su
 // propia unidad válida (cm, g, años...) — ML la manda en allowed_units/default_unit. Sin esto,
@@ -246,6 +252,30 @@ export async function getShipment(token, shipmentId) {
   return apiGet(`/shipments/${shipmentId}`, token);
 }
 
+// Fecha/hora límite real para este envío — { status: "on_time"|..., expected_date, service,
+// last_updated }. La define Mercado Libre por zona y cambia día a día, no es algo que se pueda
+// calcular del lado de Ventaz. Para Correo (drop_off/xd_drop_off) expected_date es el límite
+// para despachar; para Flex (self_service) es el límite de entrega — en los dos casos, la
+// fecha (no la hora) es el día en que el pedido tiene que salir de nuestro depósito.
+export async function getShipmentSla(token, shipmentId) {
+  return apiGet(`/shipments/${shipmentId}/sla`, token);
+}
+
+// Si el paquete ya salió físicamente de nuestro depósito — nunca lo marca un admin a mano, se
+// deriva de los datos reales que ya trae el shipment de ML. Confirmado con pedidos reales:
+// para Correo (drop_off/xd_drop_off) status se queda en "ready_to_ship" un buen rato, pero
+// substatus pasa a "picked_up" apenas el cartero lo retira — date_shipped se queda en null
+// (no sirve para Correo). Para Flex (self_service) es al revés: date_shipped se completa
+// prácticamente apenas el mensajero lo retira. Se combinan las dos señales para que sirva para
+// ambos canales sin distinguir logistic_type acá.
+export function isShipmentDispatched(shipment) {
+  if (!shipment) return false;
+  if (shipment.status_history?.date_shipped) return true;
+  if (shipment.substatus === "picked_up") return true;
+  if (["shipped", "delivered", "not_delivered"].includes(shipment.status)) return true;
+  return false;
+}
+
 export async function getItem(token, itemId) {
   return apiGet(`/items/${itemId}`, token);
 }
@@ -354,15 +384,23 @@ export async function getShippingCostEstimate(token, mlUserId, { price, dimensio
 }
 
 // Visitas + unidades vendidas + calidad de una publicación ya creada.
+//
+// El endpoint de visitas NO es /items/{id}/visits (esa ruta no existe en la API real de ML y
+// siempre devolvía error, por eso las visitas quedaban en 0 para todas las publicaciones) — el
+// endpoint correcto es /visits/items?ids={id}, que devuelve un objeto plano { "<item_id>": N }.
 export async function getItemStats(token, itemId) {
   const [item, visitsData, healthData] = await Promise.all([
-    apiGet(`/items/${itemId}?attributes=sold_quantity`, token),
-    apiGet(`/items/${itemId}/visits`, token).catch(() => null),
+    apiGet(`/items/${itemId}?attributes=sold_quantity,price`, token),
+    apiGet(`/visits/items?ids=${itemId}`, token).catch(() => null),
     apiGet(`/items/${itemId}/health`, token).catch(() => null),
   ]);
   return {
     soldQuantity: item?.sold_quantity || 0,
-    visits: visitsData?.total_visits || 0,
+    // Precio real y actual de la publicación en ML — puede diferir del que Ventaz tiene
+    // guardado en ml_listings.price (guardado al publicar/última vez que se tocó desde acá),
+    // por ejemplo si el vendedor lo cambió directo en Mercado Libre.
+    price: item?.price ?? null,
+    visits: Number(visitsData?.[itemId] ?? 0),
     health: healthData ? { pct: healthData.health, level: healthData.level } : null,
   };
 }

@@ -265,6 +265,8 @@ export async function getMlSales({ from, to, chargeStatus } = {}) {
   const { rows } = await pool.query(`
     SELECT wo.id, wo.numero, wo.customer_name, wo.total, wo.ml_order_id, wo.ml_shipment_id,
            wo.ml_cost_amount, wo.ml_charge_status, wo.ml_logistic_type, wo.created_at,
+           wo.ml_dispatch_expected_date, wo.ml_dispatch_sla_status, wo.ml_dispatched_at,
+           wo.ml_shipment_status, wo.ml_shipment_substatus, wo.ml_date_shipped,
            s.id AS seller_id, s.name AS seller_name, s.email AS seller_email, s.plan_id,
            COALESCE((SELECT json_agg(json_build_object(
                'id', woi.id, 'productId', woi.product_id, 'name', woi.name,
@@ -280,13 +282,52 @@ export async function getMlSales({ from, to, chargeStatus } = {}) {
   return rows;
 }
 
+export async function setOrderLogisticType(orderId, logisticType) {
+  await pool.query(`UPDATE web_orders SET ml_logistic_type = $1 WHERE id = $2`, [logisticType, orderId]);
+}
+
+export async function setOrderDispatchSla(orderId, { expectedDate, slaStatus }) {
+  await pool.query(
+    `UPDATE web_orders SET ml_dispatch_expected_date = $1, ml_dispatch_sla_status = $2 WHERE id = $3`,
+    [expectedDate, slaStatus, orderId]
+  );
+}
+
+// Guarda el estado real del envío tal cual lo devuelve Mercado Libre (status/substatus/
+// date_shipped) — nunca lo pisa un admin a mano. ml_dispatched_at se completa la primera vez
+// que detectamos, con estos mismos datos, que el paquete efectivamente salió de nuestro
+// depósito (ver adminService.isShipmentDispatched) — es un timestamp de cuándo lo DETECTAMOS,
+// no de cuándo alguien lo marcó.
+export async function setOrderShipmentStatus(orderId, { status, substatus, dateShipped, dispatched }) {
+  await pool.query(
+    `UPDATE web_orders
+     SET ml_shipment_status = $1, ml_shipment_substatus = $2, ml_date_shipped = $3,
+         ml_dispatched_at = CASE WHEN $4 AND ml_dispatched_at IS NULL THEN now() ELSE ml_dispatched_at END
+     WHERE id = $5`,
+    [status, substatus, dateShipped, dispatched, orderId]
+  );
+}
+
+export async function setOrderShipmentStatusByShipmentId(shipmentId, { status, substatus, dateShipped, dispatched }) {
+  await pool.query(
+    `UPDATE web_orders
+     SET ml_shipment_status = $1, ml_shipment_substatus = $2, ml_date_shipped = $3,
+         ml_dispatched_at = CASE WHEN $4 AND ml_dispatched_at IS NULL THEN now() ELSE ml_dispatched_at END
+     WHERE ml_shipment_id = $5 AND channel = 'mercadolibre'`,
+    [status, substatus, dateShipped, dispatched, shipmentId]
+  );
+}
+
 export async function getProductForAssign(productId) {
   const { rows } = await pool.query(`SELECT id, name, costo_usd FROM products WHERE id = $1`, [productId]);
   return rows[0] || null;
 }
 
-// Ítem puntual de un pedido de ML sin producto asignado — junto con lo necesario para
-// recalcular su costo (plan del vendedor, costo_usd del producto elegido) al asignarlo a mano.
+// Ítem puntual de un pedido de ML todavía sin confirmar — sin producto (nunca se pudo sugerir
+// nada) o con un producto sugerido por título (ml_match_method = 'family_name', sin confirmar
+// todavía) — junto con lo necesario para recalcular su costo (plan del vendedor, costo_usd del
+// producto elegido) al asignarlo/confirmarlo a mano. Una vez asignado (ml_match_method =
+// 'manual') ya no aparece acá, para no volver a cobrarlo.
 export async function getUnassignedMlOrderItem(itemId) {
   const { rows } = await pool.query(
     `SELECT woi.id, woi.web_order_id, woi.quantity, woi.ml_item_id,
@@ -294,7 +335,9 @@ export async function getUnassignedMlOrderItem(itemId) {
      FROM web_order_items woi
      JOIN web_orders wo ON wo.id = woi.web_order_id
      JOIN sellers s ON s.id = wo.seller_id
-     WHERE woi.id = $1 AND woi.product_id IS NULL AND wo.channel = 'mercadolibre'`,
+     WHERE woi.id = $1
+       AND (woi.ml_match_method IS NULL OR woi.ml_match_method = 'family_name')
+       AND wo.channel = 'mercadolibre'`,
     [itemId]
   );
   return rows[0] || null;
