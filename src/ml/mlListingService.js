@@ -351,6 +351,11 @@ export async function publishProduct(sellerId, productId, config) {
   if (!product) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
   if (!config.mlCategoryId) { const e = new Error("Falta la categoría de Mercado Libre"); e.status = 400; throw e; }
   if (!config.price || config.price <= 0) { const e = new Error("Falta el precio para Mercado Libre"); e.status = 400; throw e; }
+  if (!product.available_stock || product.available_stock <= 0) {
+    const e = new Error("No se puede publicar en Mercado Libre un producto sin stock disponible");
+    e.status = 400;
+    throw e;
+  }
 
   await checkMlListingLimit(sellerId);
   await assertShippingAddressOk(sellerId);
@@ -512,6 +517,11 @@ export async function publishCombo(sellerId, comboId, config) {
   const totalWeight = products.reduce((sum, p) => sum + Number(p.weight_grams || 0) * p.quantity, 0);
   const totalVolume = products.reduce((sum, p) => sum + Number(p.volume_cm3 || 0) * p.quantity, 0);
   const availableStock = Math.min(...products.map(p => Math.floor(Number(p.available_stock) / p.quantity)));
+  if (availableStock <= 0) {
+    const e = new Error("No se puede publicar en Mercado Libre un combo sin stock disponible de alguno de sus productos");
+    e.status = 400;
+    throw e;
+  }
   const comboName = await repo.getComboName(comboId);
   let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
   attributes = fillMissingPackageDimensions(attributes, totalWeight, totalVolume);
