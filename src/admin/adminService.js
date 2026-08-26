@@ -229,7 +229,8 @@ export async function getMlSales(filters) {
     if (ageHours > graceHours) matureBySeller.add(row.seller_id);
   }
 
-  const today = toArgDateString(new Date());
+  const today    = toArgDateString(new Date());
+  const tomorrow = toArgDateString(new Date(Date.now() + 86400000));
 
   return rows.map(row => {
     const dispatchDay = toArgDateString(row.ml_dispatch_expected_date);
@@ -245,8 +246,12 @@ export async function getMlSales(filters) {
       isDispatched,
       // "Pendiente de hoy" = hay que despacharlo hoy o ya se pasó la fecha límite (atrasado) y
       // todavía no se marcó como despachado — un atrasado es más urgente, no menos, así que
-      // entra igual en la pestaña del día.
+      // entra igual en la pestaña del día. Un pedido despachado (isDispatched=true) nunca entra
+      // acá ni en "mañana" — solo se vuelve a ver en la pestaña "Todos".
       needsDispatchToday: !isDispatched && !!dispatchDay && dispatchDay <= today,
+      // "Pendiente de mañana" = la fecha límite es EXACTAMENTE mañana — lo de hoy (incluido lo
+      // atrasado) ya se cubre en needsDispatchToday, así que acá no se repite.
+      needsDispatchTomorrow: !isDispatched && dispatchDay === tomorrow,
       dispatchOverdue: !isDispatched && !!dispatchDay && dispatchDay < today,
     };
   });
