@@ -169,36 +169,64 @@ export function formatMlAddress(addr) {
   return parts.length ? parts.join(", ") : (addr.address || null);
 }
 
-// Respaldo cuando /users/{id}/addresses viene bloqueado (ver getShippingAddressInfo): se busca
-// el shipment de la venta por Correo más reciente y se le pide a Mercado Libre EN VIVO su
-// sender_address — ES el domicilio de despacho real cargado en la cuenta. Flex queda afuera a
-// propósito: ahí el remitente es un centro logístico de Mercado Libre, no el domicilio
-// configurado por el vendedor, así que compararlo contra nuestro depósito no diría nada real.
-// No se guarda nada — es un solo request puntual contra un shipment ya identificado por
-// ml_shipment_id, se vuelve a pedir cada vez que se abre el panel.
-async function getSenderAddressFromLastCorreoSale(sellerId) {
+// Trae el shipment_id de la venta por Correo más reciente del vendedor (Flex queda afuera:
+// ahí el remitente es un centro logístico de ML, no el domicilio configurado por el vendedor),
+// junto con qué shipment_id tiene reconocido como "ya lo arreglé" (ver acknowledgeAddressFixed).
+async function getLastCorreoShipment(sellerId) {
   const { rows } = await pool.query(
-    `SELECT ml_shipment_id
-     FROM web_orders
-     WHERE seller_id = $1 AND channel = 'mercadolibre'
-       AND ml_logistic_type IS NOT NULL AND ml_logistic_type != 'self_service'
-       AND ml_shipment_id IS NOT NULL
-     ORDER BY created_at DESC
+    `SELECT wo.ml_shipment_id,
+            (SELECT ml_address_ack_shipment_id FROM sellers WHERE id = $1) AS acked_shipment_id
+     FROM web_orders wo
+     WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre'
+       AND wo.ml_logistic_type IS NOT NULL AND wo.ml_logistic_type != 'self_service'
+       AND wo.ml_shipment_id IS NOT NULL
+     ORDER BY wo.created_at DESC
      LIMIT 1`,
     [sellerId]
   );
-  const shipmentId = rows[0]?.ml_shipment_id;
-  if (!shipmentId) return null;
+  return rows[0] || null;
+}
+
+// Respaldo cuando /users/{id}/addresses viene bloqueado (ver getShippingAddressInfo): se busca
+// el shipment de la venta por Correo más reciente y se le pide a Mercado Libre EN VIVO su
+// sender_address — ES el domicilio de despacho real cargado en la cuenta.
+// No se guarda nada de la dirección en sí — es un solo request puntual contra un shipment ya
+// identificado por ml_shipment_id, se vuelve a pedir cada vez que se abre el panel. Lo único que
+// SÍ se guarda es el "reconocido" de acknowledgeAddressFixed, que no es un dato de Mercado
+// Libre — es la palabra del vendedor, y no hay forma de sacarlo de la API.
+async function getSenderAddressFromLastCorreoSale(sellerId) {
+  const last = await getLastCorreoShipment(sellerId);
+  if (!last?.ml_shipment_id) return null;
+
+  // El vendedor ya avisó que lo arregló y todavía no hubo una venta nueva desde entonces (sigue
+  // siendo el mismo shipment de la vez pasada) — se le cree hasta la próxima venta real. En
+  // cuanto entre una venta nueva (shipment_id distinto), esto deja de aplicar solo y se vuelve
+  // a chequear en serio contra ese envío nuevo.
+  if (last.acked_shipment_id && last.acked_shipment_id === last.ml_shipment_id) {
+    return { valid: true, address: null, acknowledged: true };
+  }
 
   const token = await getValidToken(sellerId);
   if (!token) return null;
-  const shipment = await svc.getShipment(token, shipmentId).catch(() => null);
+  const shipment = await svc.getShipment(token, last.ml_shipment_id).catch(() => null);
   const cityName = shipment?.sender_address?.city?.name;
   if (!cityName || isMaskedMlValue(cityName)) return null;
   return {
     valid: normalizeCityName(cityName) === normalizeCityName(WAREHOUSE_CITY_NAME),
     address: formatMlAddress(shipment.sender_address),
   };
+}
+
+// El vendedor apretó "ya lo cambié" — no hay forma de confirmarlo contra Mercado Libre hasta que
+// exista una venta nueva (el sender_address de un envío ya despachado es un dato histórico fijo,
+// no se actualiza solo). Mientras tanto se acepta su palabra: se guarda cuál era el último
+// shipment ya visto, y se deja de mostrar la alerta PARA ESE MISMO envío. La próxima venta por
+// Correo (shipment_id distinto) vuelve a chequearse en serio — si en realidad no lo arregló, la
+// alerta reaparece sola.
+export async function acknowledgeAddressFixed(sellerId) {
+  const last = await getLastCorreoShipment(sellerId);
+  await pool.query(`UPDATE sellers SET ml_address_ack_shipment_id = $1 WHERE id = $2`, [last?.ml_shipment_id || null, sellerId]);
+  return getShippingAddressInfo(sellerId);
 }
 
 // Compara el domicilio de despacho cargado en Mercado Libre contra el depósito real de Ventaz.

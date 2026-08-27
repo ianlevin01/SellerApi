@@ -184,6 +184,16 @@ export async function getShippingAddressStatus(req, res) {
   }
 }
 
+// POST /seller/ml/shipping-address-ack — el vendedor dice que ya corrigió el domicilio
+export async function acknowledgeShippingAddress(req, res) {
+  try {
+    return res.json(await listingSvc.acknowledgeAddressFixed(req.seller.id));
+  } catch (err) {
+    console.error("[ml] acknowledgeShippingAddress:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
 // GET /seller/ml/summary — para la pestaña "Resumen"
 export async function getSummary(req, res) {
   try {
