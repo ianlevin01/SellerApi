@@ -142,10 +142,9 @@ const WAREHOUSE_ADDRESS = process.env.ML_WAREHOUSE_ADDRESS || "Pasteur 280, CABA
 // llega la respuesta con esos campos tapados. city.name y state.name SÍ vienen reales (son
 // clasificación geográfica, no ubicación exacta), así que la comparación se hace con eso.
 const WAREHOUSE_CITY_NAME = process.env.ML_WAREHOUSE_CITY || "Balvanera";
-// Página de ayuda oficial de ML sobre cómo gestionar domicilios de despacho — no encontramos
-// (ni pudimos confirmar) una URL que lleve directo a la pantalla de edición, así que apuntamos
-// acá en vez de inventar un link que capaz no exista.
-const ML_ADDRESS_HELP_URL = "https://www.mercadolibre.com.ar/ayuda/28966";
+// Pantalla real de Mercado Libre para editar los domicilios de despacho del vendedor (no un
+// artículo de ayuda).
+const ML_ADDRESS_HELP_URL = "https://vendedores.mercadolibre.com.ar/addresses/seller/hub/actionable";
 
 // Mercado Libre manda "XXXXXXX" (o similar) en vez del valor real para los campos de ubicación
 // exacta que le enmascara a nuestra app — los tratamos como ausentes en vez de mostrarlos tal
