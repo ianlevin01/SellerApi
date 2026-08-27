@@ -135,19 +135,71 @@ async function buildPictureRef(token, key) {
 // cambia de dirección en el futuro, estas dos variables (o el .env) son lo único que hay que tocar.
 const WAREHOUSE_ZIP     = String(process.env.MICORREO_ORIGIN_CP || "1028").match(/\d{4}/)?.[0] || "1028";
 const WAREHOUSE_ADDRESS = process.env.ML_WAREHOUSE_ADDRESS || "Pasteur 280, CABA";
+// Comparamos por CIUDAD, no por código postal, cuando el dato sale de un envío real (ver
+// getSenderAddressFromLastCorreoSale): confirmado contra un shipment real (26/8) que ML
+// devuelve el zip_code y la calle/altura de sender_address enmascarados como "XXXXXXX" para
+// nuestra app — mismo bloqueo de fondo que /users/{id}/addresses, solo que acá en vez de un 403
+// llega la respuesta con esos campos tapados. city.name y state.name SÍ vienen reales (son
+// clasificación geográfica, no ubicación exacta), así que la comparación se hace con eso.
+const WAREHOUSE_CITY_NAME = process.env.ML_WAREHOUSE_CITY || "Balvanera";
 // Página de ayuda oficial de ML sobre cómo gestionar domicilios de despacho — no encontramos
 // (ni pudimos confirmar) una URL que lleve directo a la pantalla de edición, así que apuntamos
 // acá en vez de inventar un link que capaz no exista.
 const ML_ADDRESS_HELP_URL = "https://www.mercadolibre.com.ar/ayuda/28966";
 
-function formatMlAddress(addr) {
+// Mercado Libre manda "XXXXXXX" (o similar) en vez del valor real para los campos de ubicación
+// exacta que le enmascara a nuestra app — los tratamos como ausentes en vez de mostrarlos tal
+// cual en el mensaje de la alerta.
+function isMaskedMlValue(v) {
+  return typeof v === "string" && /^x+$/i.test(v.trim());
+}
+
+function normalizeCityName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+export function formatMlAddress(addr) {
   if (!addr) return null;
+  const street = [addr.street_name, addr.street_number]
+    .filter(v => v && !isMaskedMlValue(v)).join(" ");
   const parts = [
-    [addr.street_name, addr.street_number].filter(Boolean).join(" "),
-    addr.city?.name || addr.city,
-    addr.state?.name || addr.state,
+    street,
+    addr.city?.name || (typeof addr.city === "string" && !isMaskedMlValue(addr.city) ? addr.city : null),
+    addr.state?.name || (typeof addr.state === "string" && !isMaskedMlValue(addr.state) ? addr.state : null),
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : (addr.address || null);
+}
+
+// Respaldo cuando /users/{id}/addresses viene bloqueado (ver getShippingAddressInfo): se busca
+// el shipment de la venta por Correo más reciente y se le pide a Mercado Libre EN VIVO su
+// sender_address — ES el domicilio de despacho real cargado en la cuenta. Flex queda afuera a
+// propósito: ahí el remitente es un centro logístico de Mercado Libre, no el domicilio
+// configurado por el vendedor, así que compararlo contra nuestro depósito no diría nada real.
+// No se guarda nada — es un solo request puntual contra un shipment ya identificado por
+// ml_shipment_id, se vuelve a pedir cada vez que se abre el panel.
+async function getSenderAddressFromLastCorreoSale(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT ml_shipment_id
+     FROM web_orders
+     WHERE seller_id = $1 AND channel = 'mercadolibre'
+       AND ml_logistic_type IS NOT NULL AND ml_logistic_type != 'self_service'
+       AND ml_shipment_id IS NOT NULL
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [sellerId]
+  );
+  const shipmentId = rows[0]?.ml_shipment_id;
+  if (!shipmentId) return null;
+
+  const token = await getValidToken(sellerId);
+  if (!token) return null;
+  const shipment = await svc.getShipment(token, shipmentId).catch(() => null);
+  const cityName = shipment?.sender_address?.city?.name;
+  if (!cityName || isMaskedMlValue(cityName)) return null;
+  return {
+    valid: normalizeCityName(cityName) === normalizeCityName(WAREHOUSE_CITY_NAME),
+    address: formatMlAddress(shipment.sender_address),
+  };
 }
 
 // Compara el domicilio de despacho cargado en Mercado Libre contra el depósito real de Ventaz.
@@ -160,26 +212,30 @@ export async function getShippingAddressInfo(sellerId) {
   const conn = await repo.getConnection(sellerId);
   if (!conn?.ml_user_id) return { connected: false };
 
+  const base = { connected: true, warehouseAddress: WAREHOUSE_ADDRESS, changeAddressUrl: ML_ADDRESS_HELP_URL };
+
   let addresses = null;
   try { addresses = await svc.getUserAddresses(token, conn.ml_user_id); } catch { addresses = null; }
 
-  const base = { connected: true, warehouseAddress: WAREHOUSE_ADDRESS, changeAddressUrl: ML_ADDRESS_HELP_URL };
-  if (!Array.isArray(addresses) || addresses.length === 0) return { ...base, unknown: true };
+  if (Array.isArray(addresses) && addresses.length > 0) {
+    const shippingAddr = addresses.find(a => a.types?.includes("shipping"))
+      || addresses.find(a => a.types?.includes("default_selling_address"))
+      || addresses[0];
+    const currentZip = String(shippingAddr?.zip_code || "").match(/\d{4}/)?.[0] || null;
+    if (currentZip) {
+      return { ...base, unknown: false, valid: currentZip === WAREHOUSE_ZIP, currentZip, currentAddress: formatMlAddress(shippingAddr) };
+    }
+  }
 
-  const shippingAddr = addresses.find(a => a.types?.includes("shipping"))
-    || addresses.find(a => a.types?.includes("default_selling_address"))
-    || addresses[0];
+  // /users/{id}/addresses hoy devuelve 403 PA_UNAUTHORIZED_RESULT_FROM_POLICIES para todas las
+  // cuentas conectadas (confirmado contra las 5 cuentas reales que había el 26/8) — en vez de
+  // quedarnos en "unknown" para siempre, probamos en vivo con la última venta real por Correo.
+  const fromLastSale = await getSenderAddressFromLastCorreoSale(sellerId);
+  if (fromLastSale) {
+    return { ...base, unknown: false, valid: fromLastSale.valid, currentAddress: fromLastSale.address };
+  }
 
-  const currentZip = String(shippingAddr?.zip_code || "").match(/\d{4}/)?.[0] || null;
-  if (!currentZip) return { ...base, unknown: true };
-
-  return {
-    ...base,
-    unknown: false,
-    valid: currentZip === WAREHOUSE_ZIP,
-    currentZip,
-    currentAddress: formatMlAddress(shippingAddr),
-  };
+  return { ...base, unknown: true };
 }
 
 // Usado antes de publicar — solo bloquea cuando getShippingAddressInfo está seguro de que el
