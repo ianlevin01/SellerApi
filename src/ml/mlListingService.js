@@ -282,11 +282,11 @@ async function assertShippingAddressOk(sellerId) {
 
 // Límite de publicaciones activas según el plan — mismo patrón que el límite de tiendas en
 // storeService.createPage. Compartido por publishProduct y publishCombo.
-async function checkMlListingLimit(sellerId) {
+async function checkMlListingLimit(sellerId, count = 1) {
   const { plan_id } = await getSellerPlan(sellerId);
   const listingLimit = getPlanMlListingLimit(plan_id);
   const activeCount = await repo.countActiveListings(sellerId);
-  if (activeCount >= listingLimit) {
+  if (activeCount + count > listingLimit) {
     const names = { inicial: "Plan Inicial", pro: "Plan Pro", max: "Plan Max" };
     const e = new Error(`Tu ${names[plan_id] || "plan actual"} permite hasta ${listingLimit} publicación${listingLimit === 1 ? "" : "es"} activa${listingLimit === 1 ? "" : "s"} en Mercado Libre. Actualizá tu plan para publicar más.`);
     e.status = 403;
@@ -374,11 +374,11 @@ async function createMlItem(token, payload) {
     // ML manda un texto en inglés poco claro cuando la cuenta no tiene Mercado Envíos
     // activo (necesario porque siempre publicamos con shipping.mode = "me2") — lo
     // traducimos a algo que el vendedor pueda accionar directamente en su cuenta de ML.
-    if (/mode me1|mercado.?envios/i.test(err.message)) {
-      const e = new Error("Tu cuenta de Mercado Libre no tiene Mercado Envíos activado. Entrá a mercadolibre.com.ar → Configuración → Envíos y activalo antes de publicar.");
-      e.status = 400;
-      throw e;
-    }
+    //if (/mode me1|mercado.?envios/i.test(err.message)) {
+      //const e = new Error("Tu cuenta de Mercado Libre no tiene Mercado Envíos activado. Entrá a mercadolibre.com.ar → Configuración → Envíos y activalo antes de publicar.");
+      //e.status = 400;
+      //throw e;
+    //}
     // Para algunas categorías/precios, Mercado Libre exige envío gratis obligatorio (según
     // categoría y monto) — si el vendedor no lo tildó y ML lo rechaza por eso, reintentamos
     // una vez solos con envío gratis en vez de hacerle adivinar el motivo del error.
@@ -483,7 +483,189 @@ export async function publishProduct(sellerId, productId, config) {
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
+    mlFamilyId: item.familyId, publishedAsFamily: !item.usedClassicFallback,
   });
+}
+
+// ── Variantes (modelo "User Products" de ML) ────────────────────
+
+// Elegibilidad para precio distinto por variante — depende de un tag en la cuenta de ML
+// conectada (user_product_seller), no de algo que Ventaz controle. Sin ese tag, ML solo ofrece
+// el modelo clásico de variaciones, que NUNCA permite precio distinto por variante (limitación
+// dura de ML, confirmada en su propia documentación — no es un bug ni algo que dependa de la
+// categoría). Se cachea con TTL largo porque es un dato de programa de cuenta, no algo que
+// cambie de un momento a otro.
+const VARIANT_ELIGIBILITY_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+export async function getVariantEligibility(sellerId, { forceRefresh = false } = {}) {
+  const cached = await repo.getConnectionVariantEligibility(sellerId);
+  if (!cached) return { connected: false, eligible: false };
+
+  const isStale = !cached.user_product_checked_at
+    || Date.now() - new Date(cached.user_product_checked_at).getTime() > VARIANT_ELIGIBILITY_TTL_MS;
+  if (cached.user_product_seller != null && !isStale && !forceRefresh) {
+    return { connected: true, eligible: cached.user_product_seller, checkedAt: cached.user_product_checked_at };
+  }
+
+  const token = await getValidToken(sellerId);
+  if (!token) return { connected: false, eligible: false };
+  const user = await svc.getUser(token).catch(() => null);
+  if (!user) return { connected: true, eligible: cached.user_product_seller ?? false, checkedAt: cached.user_product_checked_at };
+
+  const eligible = user.tags.includes("user_product_seller");
+  const checkedAt = new Date();
+  await repo.updateVariantEligibility(sellerId, { eligible, checkedAt });
+  return { connected: true, eligible, checkedAt };
+}
+
+// Agrega variantes (ej. colores) a una publicación existente, formando (o sumándose a) una
+// familia de Mercado Libre. Cada variante es un ítem propio e independiente (modelo "User
+// Products" — el mismo que publishProduct ya usa por defecto vía family_name), nunca el array
+// variations[] clásico. Arranca de los atributos YA resueltos de la publicación raíz (GTIN,
+// dimensiones de paquete, etc. quedaron completos desde que se publicó originalmente) y solo
+// reemplaza el atributo que efectivamente varía entre variantes — no hace falta correr de nuevo
+// fillMissingGtinExemption/fillMissingPackageDimensions/fillMissingUnitsPerPack.
+//
+// config: {
+//   variantAttributeId, variantAttributeName,     // ej. "COLOR", "Color"
+//   rootValue, rootOrderedImages,                  // solo si la raíz todavía no era parte de una familia
+//   sharedPrice,                                   // usado solo si la cuenta no es elegible para precio por variante
+//   variants: [{ value, price, orderedImages }],   // una por variante nueva
+// }
+export async function addVariantsToListing(sellerId, mlItemId, config) {
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
+
+  const root = await repo.getListingForVariants(mlItemId, sellerId);
+  if (!root) { const e = new Error("Publicación no encontrada"); e.status = 404; throw e; }
+  if (root.ml_combo_id) { const e = new Error("Los combos todavía no admiten variantes"); e.status = 400; throw e; }
+  if (root.published_as_family === false) {
+    const e = new Error("Esta categoría de Mercado Libre no admite variantes");
+    e.status = 400;
+    throw e;
+  }
+  if (!config.variants?.length) { const e = new Error("Agregá al menos una variante"); e.status = 400; throw e; }
+
+  const needsRootValue = !root.variant_value;
+  if (needsRootValue && !config.rootValue) {
+    const e = new Error("Falta el valor de la publicación existente (ej. su color actual)");
+    e.status = 400;
+    throw e;
+  }
+
+  const product = await getProductForListing(root.product_id);
+  if (!product) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
+  if (!product.available_stock || product.available_stock <= 0) {
+    const e = new Error("No se puede agregar variantes a un producto sin stock disponible");
+    e.status = 400;
+    throw e;
+  }
+
+  await checkMlListingLimit(sellerId, config.variants.length);
+  await assertShippingAddressOk(sellerId);
+
+  const { eligible: perVariantPrice } = await getVariantEligibility(sellerId);
+  const floor = await getPriceFloor(sellerId, root.product_id);
+  const sharedPrice = perVariantPrice ? null : (config.sharedPrice ?? root.price);
+  if (!perVariantPrice && (!sharedPrice || sharedPrice < floor)) {
+    const e = new Error(`El precio no puede ser menor a $${Math.round(floor).toLocaleString("es-AR")} (costo total del producto)`);
+    e.status = 400;
+    throw e;
+  }
+  for (const v of config.variants) {
+    const price = perVariantPrice ? v.price : sharedPrice;
+    if (!price || price < floor) {
+      const e = new Error(`El precio de "${v.value}" no puede ser menor a $${Math.round(floor).toLocaleString("es-AR")}`);
+      e.status = 400;
+      throw e;
+    }
+  }
+  if (perVariantPrice && config.rootPrice && Number(config.rootPrice) < floor) {
+    const e = new Error(`El precio no puede ser menor a $${Math.round(floor).toLocaleString("es-AR")} (costo total del producto)`);
+    e.status = 400;
+    throw e;
+  }
+
+  // Varias variantes suelen compartir las mismas fotos del catálogo — sin este caché se
+  // re-subirían a la API de Pictures de ML una vez por cada variante que las use.
+  const pictureCache = new Map();
+  async function resolveImages(orderedImages) {
+    const resolved = await Promise.all((orderedImages || []).map(async item => {
+      if (item.type !== "existing") return item.ref;
+      if (!pictureCache.has(item.key)) pictureCache.set(item.key, await buildPictureRef(token, item.key));
+      return pictureCache.get(item.key);
+    }));
+    return resolved.filter(Boolean);
+  }
+
+  const dimensions = estimateShippingDimensions(product.weight_grams, product.volume_cm3);
+  const baseAttributes = (root.attributes || []).filter(a => a.id !== config.variantAttributeId);
+
+  let rootPrice = Number(root.price);
+  if (needsRootValue) {
+    const rootPictures = await resolveImages(config.rootOrderedImages);
+    // Precio nuevo de la raíz: solo si la cuenta es elegible para precio por variante y el
+    // vendedor lo cambió — si no, se deja el que ya tenía (sharedPrice es un dato de Ventaz,
+    // ML nunca se entera de que existe).
+    if (perVariantPrice && config.rootPrice) rootPrice = Number(config.rootPrice);
+
+    if (rootPictures.length > 0) {
+      // Deja la publicación raíz con el mismo valor de variación que el resto de la familia —
+      // antes de esto seguía teniendo lo que tenía al publicarse originalmente (sin ese atributo).
+      await svc.updateItem(token, mlItemId, {
+        attributes: [...baseAttributes, { id: config.variantAttributeId, value_name: config.rootValue }],
+        pictures: rootPictures,
+        ...(rootPrice !== Number(root.price) ? { price: rootPrice } : {}),
+      }).catch(err => console.warn(`[ml] no se pudo actualizar la raíz ${mlItemId} con su valor de variante:`, err.message));
+    }
+    await pool.query(`UPDATE ml_listings SET price = $1 WHERE ml_item_id = $2`, [rootPrice, mlItemId]);
+  }
+
+  const created = [];
+  let familyId = root.ml_family_id || null;
+  let failedAt = null;
+
+  for (const v of config.variants) {
+    try {
+      const pictures = await resolveImages(v.orderedImages);
+      if (pictures.length === 0) { failedAt = { value: v.value, message: "Seleccioná o subí al menos una imagen" }; break; }
+
+      const attributes = [...baseAttributes, { id: config.variantAttributeId, value_name: v.value }];
+      const price = perVariantPrice ? v.price : sharedPrice;
+
+      const item = await createMlItem(token, {
+        title: product.name, categoryId: root.ml_category_id, price, stock: product.available_stock,
+        description: product.description, pictures, dimensions, attributes,
+        shippingFree: !!root.shipping_free, listingTypeId: "gold_special",
+      });
+
+      if (!familyId) familyId = item.familyId;
+
+      const row = await repo.createListing(sellerId, {
+        productId: root.product_id, mlItemId: item.mlItemId, permalink: item.permalink,
+        status: "active", price, mlCategoryId: root.ml_category_id,
+        attributes, shippingFree: item.shippingFreeUsed,
+        mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
+        mlFamilyId: item.familyId || familyId, variantAttributeId: config.variantAttributeId,
+        variantAttributeName: config.variantAttributeName, variantValue: v.value,
+        isVariantRoot: false, publishedAsFamily: !item.usedClassicFallback,
+      });
+      created.push(row);
+    } catch (err) {
+      failedAt = { value: v.value, message: err.message, missingAttribute: err.missingAttribute || null, addressMismatch: err.addressMismatch || false };
+      break;
+    }
+  }
+
+  if (needsRootValue) {
+    await repo.setListingVariantInfo(mlItemId, {
+      mlFamilyId: familyId, variantAttributeId: config.variantAttributeId,
+      variantAttributeName: config.variantAttributeName, variantValue: config.rootValue,
+    });
+  }
+
+  return { familyId, root: await repo.getListingForVariants(mlItemId, sellerId), created, failed: failedAt };
 }
 
 // ── Combos de ML ───────────────────────────────────────────────
@@ -629,6 +811,7 @@ export async function publishCombo(sellerId, comboId, config) {
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
+    mlFamilyId: item.familyId, publishedAsFamily: !item.usedClassicFallback,
   });
 }
 
