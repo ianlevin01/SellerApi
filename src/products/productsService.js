@@ -8,7 +8,11 @@ import pool from "../database/db.js";
 
 // ml_cost_markup_pct (costo × margen fijo elegido por cuenta) tiene prioridad sobre
 // raw_cost_mode (costo literal, sin ningún margen) si ambos estuvieran cargados.
-async function getCostOverrides(sellerId) {
+// Exportadas para que sellerCheckoutService.js calcule el monto a cobrar con la MISMA lógica
+// que ve el vendedor acá al navegar el catálogo — antes tenía su propia copia que solo miraba
+// raw_cost_mode (nunca ml_cost_markup_pct), así que a un vendedor con margen fijo cargado se le
+// mostraba un precio en el catálogo y se le cobraba otro distinto al pagar.
+export async function getCostOverrides(sellerId) {
   const { rows } = await pool.query(
     "SELECT raw_cost_mode, ml_cost_markup_pct FROM sellers WHERE id = $1", [sellerId]
   );
@@ -18,7 +22,7 @@ async function getCostOverrides(sellerId) {
   };
 }
 
-function calcPrecio1(costUsd, cotizacion, planId, { rawCost, markupPct }) {
+export function calcPrecio1(costUsd, cotizacion, planId, { rawCost, markupPct }) {
   if (!costUsd) return null;
   if (markupPct != null) return Math.round(Number(costUsd) * cotizacion * (1 + markupPct / 100));
   return rawCost ? Math.round(Number(costUsd) * cotizacion) : calcShownCost(costUsd, cotizacion, 30, planId);
@@ -115,4 +119,8 @@ export async function customizeProduct(pageId, sellerId, productId, data) {
 
   await productsRepository.customizeProduct(pageId, sellerId, productId, data);
   return { message: "Producto actualizado" };
+}
+
+export async function getTopSellingProductIds() {
+  return productsRepository.getTopSellingProductIds({ days: 7, limit: 10 });
 }

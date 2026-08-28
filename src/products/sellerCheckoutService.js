@@ -3,22 +3,9 @@ import * as productsRepo from "./productsRepository.js";
 import * as purchaseRepo from "../purchase/purchaseRepository.js";
 import { getCotizacion } from "../store/storeRepository.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
-import { calcShownCost } from "../utils/pricing.js";
+import { getCostOverrides, calcPrecio1 } from "./productsService.js";
 import { getRates, getAgencies } from "../shipping/shippingService.js";
 import { sendSellerOrderPending } from "../email/buyerEmails.js";
-import pool from "../database/db.js";
-
-async function getSellerRawCostMode(sellerId) {
-  const { rows } = await pool.query("SELECT raw_cost_mode FROM sellers WHERE id = $1", [sellerId]);
-  return rows[0]?.raw_cost_mode === true;
-}
-
-function calcPrecio1(costUsd, cotizacion, planId, rawCost) {
-  if (!costUsd) return 0;
-  return rawCost
-    ? Math.round(Number(costUsd) * cotizacion)
-    : calcShownCost(costUsd, cotizacion, 30, planId);
-}
 
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
@@ -49,12 +36,12 @@ export async function requestProductCheckout(sellerId, productId, shipping, page
   // shipping = { type: "pickup" | "sucursal" | "domicilio", postal_code?, rate? }
   // rate = { code, name, price } — ya calculado en el frontend desde /shipping-quote
 
-  const [product, seller, cotizacion, { plan_id }, rawCost] = await Promise.all([
+  const [product, seller, cotizacion, { plan_id }, overrides] = await Promise.all([
     productsRepo.getProductForCheckout(productId),
     productsRepo.getSellerInfo(sellerId),
     getCotizacion(),
     getSellerPlan(sellerId),
-    getSellerRawCostMode(sellerId),
+    getCostOverrides(sellerId),
   ]);
 
   if (!product) {
@@ -63,7 +50,7 @@ export async function requestProductCheckout(sellerId, productId, shipping, page
     throw err;
   }
 
-  const precio1 = calcPrecio1(product.costo_usd, cotizacion, plan_id, rawCost);
+  const precio1 = calcPrecio1(product.costo_usd, cotizacion, plan_id, overrides) || 0;
   const shippingAmount = (shipping.type === "pickup" || !shipping.rate) ? 0 : Number(shipping.rate?.price || 0);
   const total = precio1 + shippingAmount;
 
@@ -142,12 +129,12 @@ export async function reserveStockCheckout(sellerId, productId, quantity, pageId
     throw err;
   }
 
-  const [product, seller, cotizacion, { plan_id }, rawCost] = await Promise.all([
+  const [product, seller, cotizacion, { plan_id }, overrides] = await Promise.all([
     productsRepo.getProductForCheckout(productId),
     productsRepo.getSellerInfo(sellerId),
     getCotizacion(),
     getSellerPlan(sellerId),
-    getSellerRawCostMode(sellerId),
+    getCostOverrides(sellerId),
   ]);
 
   if (!product) {
@@ -164,7 +151,7 @@ export async function reserveStockCheckout(sellerId, productId, quantity, pageId
     throw err;
   }
 
-  const precio1 = calcPrecio1(product.costo_usd, cotizacion, plan_id, rawCost);
+  const precio1 = (calcPrecio1(product.costo_usd, cotizacion, plan_id, overrides) || 0);
   const total   = precio1 * quantity;
 
   const customer = {
