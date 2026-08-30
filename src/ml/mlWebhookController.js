@@ -162,6 +162,7 @@ export async function processOrder(conn, order) {
         quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: 0,
         mlItemId: item.item.id, variantLabel, permalink: resolved.mlItem?.permalink || null,
         matchMethod: resolved.productId ? "family_name" : null,
+        mlSaleFee: item.sale_fee,
       });
       continue;
     }
@@ -189,9 +190,13 @@ export async function processOrder(conn, order) {
         costTotal += productUnitCost * chargeableQty;
         const share = comboUnitCost > 0 ? (productUnitCost * cp.quantity) / comboUnitCost : 0;
         const unitPrice = qty > 0 ? (item.unit_price * item.quantity * share) / qty : 0;
+        // Mismo reparto proporcional que unitPrice — item.sale_fee es la comisión real del
+        // combo entero (por unidad de combo vendida), se reparte por producto según su peso.
+        const saleFee = qty > 0 ? (Number(item.sale_fee || 0) * item.quantity * share) / qty : 0;
         items.push({
           productId: cp.product_id, name: cp.name, quantity: qty, unitPrice, sellerStockUsed: reserveUsed,
           mlItemId: item.item.id, variantLabel, permalink, matchMethod,
+          mlSaleFee: saleFee,
         });
       }
     } else {
@@ -208,6 +213,7 @@ export async function processOrder(conn, order) {
       items.push({
         productId: product.product_id, name: product.name, quantity: item.quantity, unitPrice: item.unit_price, sellerStockUsed: reserveUsed,
         mlItemId: item.item.id, variantLabel, permalink, matchMethod,
+        mlSaleFee: item.sale_fee,
       });
     }
   }
@@ -224,6 +230,13 @@ export async function processOrder(conn, order) {
   let shipmentSubstatus = null;
   let dateShipped = null;
   let dispatched = false;
+  // Costo real de envío gratis que absorbe el vendedor en ESTE pedido — shipping_option.cost es
+  // lo que pagó el comprador (0 si es 100% gratis, pero puede ser parcial), list_cost es la
+  // tarifa de envío real que Mercado Libre le ofrece/cobra al vendedor (documentado así en la
+  // propia guía de ML: "shipping fee offered to the seller") — la diferencia es lo que el
+  // vendedor termina poniendo de su bolsillo. Se calcula UNA sola vez acá, al procesar el
+  // pedido — no es una estimación de cuando se publicó, es del envío real de esta venta.
+  let mlShippingCost = null;
   if (order.shipping?.id) {
     const shipment = await svc.getShipment(token, order.shipping.id).catch(() => null);
     logisticType = shipment?.logistic_type || null;
@@ -234,6 +247,11 @@ export async function processOrder(conn, order) {
     const sla = await svc.getShipmentSla(token, order.shipping.id).catch(() => null);
     dispatchExpectedDate = sla?.expected_date || null;
     dispatchSlaStatus = sla?.status || null;
+    if (shipment?.shipping_option) {
+      const listCost   = Number(shipment.shipping_option.list_cost || 0);
+      const paidByBuyer = Number(shipment.shipping_option.cost || 0);
+      mlShippingCost = Math.max(0, listCost - paidByBuyer);
+    }
   }
 
   const buyer = order.buyer || {};
@@ -243,23 +261,25 @@ export async function processOrder(conn, order) {
          ml_shipment_id = $6, ml_cost_amount = $7, ml_logistic_type = $8,
          ml_dispatch_expected_date = $9, ml_dispatch_sla_status = $10,
          ml_shipment_status = $11, ml_shipment_substatus = $12, ml_date_shipped = $13,
-         ml_dispatched_at = CASE WHEN $14 THEN now() ELSE NULL END
+         ml_dispatched_at = CASE WHEN $14 THEN now() ELSE NULL END,
+         ml_shipping_cost = $15
      WHERE id = $1
      RETURNING numero`,
     [webOrderId, buyer.nickname || buyer.first_name || "Comprador ML", buyer.email || null,
      buyer.phone?.number || null, order.total_amount,
      order.shipping?.id ? String(order.shipping.id) : null, costTotal, logisticType,
      dispatchExpectedDate, dispatchSlaStatus,
-     shipmentStatus, shipmentSubstatus, dateShipped, dispatched]
+     shipmentStatus, shipmentSubstatus, dateShipped, dispatched, mlShippingCost]
   );
 
   for (const item of items) {
     await pool.query(
       `INSERT INTO web_order_items
-         (web_order_id, product_id, name, quantity, unit_price, ml_item_id, ml_variant_label, ml_permalink, ml_match_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (web_order_id, product_id, name, quantity, unit_price, ml_item_id, ml_variant_label, ml_permalink, ml_match_method, ml_sale_fee)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [webOrderId, item.productId, item.name, item.quantity, item.unitPrice,
-       item.mlItemId || null, item.variantLabel || null, item.permalink || null, item.matchMethod || null]
+       item.mlItemId || null, item.variantLabel || null, item.permalink || null, item.matchMethod || null,
+       item.mlSaleFee != null ? Number(item.mlSaleFee) : null]
     );
     if (item.sellerStockUsed > 0) {
       await markItemSellerStock(webOrderId, item.productId, item.sellerStockUsed);

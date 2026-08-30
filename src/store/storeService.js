@@ -253,7 +253,8 @@ export async function getOrders(sellerId) {
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
     const orderPlatformPct = getSellerPlatformPct(Number(order.total));
-    let ganancia_vendedor  = 0;
+    let ganancia_producto  = 0;
+    let costo_producto     = 0;
 
     for (const item of order.items) {
       if (!item.product_id) continue;
@@ -272,14 +273,24 @@ export async function getOrders(sellerId) {
       // adjustedCost = baseCost × (1 + platformPct/100) / 1.30
       // baseCost fue calculado con tier 30%; ajustamos al tier real del pedido
       const adjustedCost = baseCost * (1 + orderPlatformPct / 100) / 1.30;
-      const diferencia   = Number(item.unit_price) - adjustedCost;
-      if (diferencia > 0) ganancia_vendedor += diferencia * item.quantity;
+      costo_producto += adjustedCost * item.quantity;
+      const diferencia = Number(item.unit_price) - adjustedCost;
+      if (diferencia > 0) ganancia_producto += diferencia * item.quantity;
     }
 
+    // Comisión real de Mercado Libre (sale_fee por unidad, ya guardada por el webhook al
+    // procesar la venta) y costo real de envío gratis que absorbió el vendedor en ESTE pedido
+    // (list_cost - lo que pagó el comprador) — ambos son datos reales de la venta, no estimaciones.
+    const comisionMl = order.items.reduce(
+      (sum, item) => sum + Number(item.ml_sale_fee || 0) * Number(item.quantity || 0), 0
+    );
+    const envioGratisMl = Number(order.ml_shipping_cost || 0);
     const freeShippingAbsorbed = Number(order.free_shipping_absorbed || 0);
-    ganancia_vendedor = Math.max(0, ganancia_vendedor - freeShippingAbsorbed);
+    const ganancia_vendedor = Math.max(
+      0, ganancia_producto - freeShippingAbsorbed - comisionMl - envioGratisMl
+    );
 
-    return { ...order, ganancia_vendedor };
+    return { ...order, ganancia_vendedor, costo_producto, comision_ml: comisionMl, envio_gratis_ml: envioGratisMl };
   }));
 
   return withGanancia;

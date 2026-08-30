@@ -150,6 +150,7 @@ export async function getOrders(sellerId) {
        COALESCE(wo.shipping_amount, 0) AS shipping_amount,
        COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
        wo.color, wo.created_at, wo.order_id, wo.channel,
+       wo.ml_shipping_cost,
        COALESCE(
          (SELECT json_agg(json_build_object(
            'name',                woi.name,
@@ -158,7 +159,8 @@ export async function getOrders(sellerId) {
            'unit_cost',           woi.unit_cost,
            'product_id',          woi.product_id,
            'selected_color_name', woi.selected_color_name,
-           'selected_color_hex',  woi.selected_color_hex
+           'selected_color_hex',  woi.selected_color_hex,
+           'ml_sale_fee',         woi.ml_sale_fee
          )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
          '[]'
        ) AS items,
