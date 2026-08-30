@@ -252,6 +252,8 @@ export async function reactivateListingsAfterChargeSuccess(sellerId) {
 // por stock, y para el mail correspondiente. El stock "efectivo" de un seller es su propia
 // reserva (garantizada solo para él) más lo que quede del pool compartido sin reservar por
 // nadie — así un seller con reserva propia no se ve afectado por el consumo de otros.
+// sellers.ml_stock_sync_disabled excluye por completo al seller de acá — mlStockSync.js nunca
+// llega a ver (ni pisar) el stock de sus publicaciones.
 export async function getActiveListingsWithStock() {
   const { rows } = await pool.query(
     `SELECT l.seller_id, l.ml_item_id, l.product_id, l.status, l.pause_reason, l.permalink,
@@ -268,7 +270,7 @@ export async function getActiveListingsWithStock() {
      FROM ml_listings l
      JOIN products p ON p.id = l.product_id
      JOIN sellers s  ON s.id = l.seller_id
-     WHERE l.status IN ('active', 'paused')`
+     WHERE l.status IN ('active', 'paused') AND s.ml_stock_sync_disabled = false`
   );
   return rows.map(r => ({
     ...r,
@@ -291,7 +293,7 @@ export async function getActiveComboListings() {
      FROM ml_listings l
      JOIN ml_combos c ON c.id = l.ml_combo_id
      JOIN sellers s  ON s.id = l.seller_id
-     WHERE l.status IN ('active', 'paused')`
+     WHERE l.status IN ('active', 'paused') AND s.ml_stock_sync_disabled = false`
   );
   return rows;
 }
