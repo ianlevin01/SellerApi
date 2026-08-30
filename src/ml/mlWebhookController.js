@@ -247,7 +247,12 @@ export async function processOrder(conn, order) {
     const sla = await svc.getShipmentSla(token, order.shipping.id).catch(() => null);
     dispatchExpectedDate = sla?.expected_date || null;
     dispatchSlaStatus = sla?.status || null;
-    if (shipment?.shipping_option) {
+    // Flex (self_service) lo entrega el propio vendedor — Mercado Libre no le cobra ese envío
+    // (confirmado contra la facturación real de un vendedor: una venta con envío gratis por
+    // Flex no tuvo ningún cargo de envío, aunque shipping_option.list_cost venga con un valor
+    // igual que en Correo). El cobro real de list_cost solo aplica cuando el envío lo hace la
+    // red logística de Mercado Libre (drop_off/xd_drop_off/cross_docking, o fulfillment).
+    if (shipment?.shipping_option && shipment.logistic_type !== "self_service") {
       const listCost   = Number(shipment.shipping_option.list_cost || 0);
       const paidByBuyer = Number(shipment.shipping_option.cost || 0);
       mlShippingCost = Math.max(0, listCost - paidByBuyer);

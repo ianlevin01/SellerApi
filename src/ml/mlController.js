@@ -297,12 +297,23 @@ export async function getListingStats(req, res) {
     if (!token) return res.status(400).json({ message: "Mercado Libre no está conectado" });
     const conn = await repo.getConnection(req.seller.id);
     const listing = await repo.getListingByMlItemId(req.params.mlItemId).catch(() => null);
-    const [stats, fees] = await Promise.all([
-      svc.getItemStats(token, req.params.mlItemId),
-      listing?.price && listing?.ml_category_id
-        ? svc.getListingFees(token, conn?.site_id || "MLA", { price: listing.price, categoryId: listing.ml_category_id, includeInstallments: false })
-        : null,
-    ]);
+    const stats = await svc.getItemStats(token, req.params.mlItemId);
+    // Precio/categoría/tipo de publicación reales de ML (stats), no los cacheados en
+    // ml_listings — si el vendedor cambió el precio o el tipo de publicación (Clásica/Premium)
+    // directo en Mercado Libre, lo cacheado queda viejo y la comisión estimada da distinta a
+    // la real. Solo se cae al dato cacheado si por algún motivo ML no devolvió el real.
+    const price      = stats.price ?? listing?.price;
+    const categoryId = stats.categoryId ?? listing?.ml_category_id;
+    // Si es gold_pro (Premium), el tag real de cuotas activo cambia el cargo por vender —
+    // sin él, ML asume "6 cuotas" (el único plan de gold_pro sin tag propio en /items), que no
+    // siempre es la campaña real de esta publicación puntual.
+    const installmentTag = stats.tags?.find(t => svc.KNOWN_INSTALLMENT_TAGS.includes(t));
+    const fees = price && categoryId
+      ? await svc.getListingFees(token, conn?.site_id || "MLA", {
+          price, categoryId, listingTypeId: stats.listingTypeId || undefined,
+          tags: installmentTag, includeInstallments: false,
+        })
+      : null;
     return res.json({ ...stats, fees });
   } catch (err) {
     console.error("[ml] getListingStats:", err.message);

@@ -313,16 +313,28 @@ const INSTALLMENT_CAMPAIGNS = [
   { id: "cs12", label: "12 cuotas al mismo precio que publicaste", listingTypeId: "gold_pro",      tags: "cuota-simple-12", desc: null },
 ];
 
+// Tags que Mercado Libre deja en el propio ítem cuando tiene una campaña de cuotas activa
+// (confirmado contra la doc oficial "Campaigns with installments for Marketplace" —
+// "Respect the listing_type + tag relationship"). Necesarios para pedirle a /listing_prices
+// el cargo por vender REAL de una publicación gold_pro ya existente: sin el tag correcto, ML
+// asume "6 cuotas al mismo precio" (el único plan de gold_pro que NO deja tag en /items), que
+// puede no ser la campaña realmente activa y da un cargo mucho más alto que el real.
+export const KNOWN_INSTALLMENT_TAGS = ["3x_campaign", "cuota-simple-3", "cuota-simple-6", "cuota-simple-paid-by-buyer", "pcj-co-funded"];
+
 // Desglose de comisión/costos de ML para un precio+categoría — lo mismo que ML muestra
 // como "Recibís" al publicar. No hace falta el ítem creado, solo precio/categoría.
+//
+// tags: para reflejar el cargo REAL de una publicación gold_pro ya existente, pasar acá el tag
+// de cuotas que realmente tiene activo el ítem (ver KNOWN_INSTALLMENT_TAGS) — sin esto, gold_pro
+// simula "6 cuotas" por default, que no siempre es la campaña real de esa publicación puntual.
 //
 // includeInstallments=false evita las 5 consultas extra de campañas de cuotas cuando no hace
 // falta mostrarlas (ej. la fila de cada publicación en el listado, que solo muestra cargo por
 // vender/recibís) — pedirlas ahí sería tráfico desperdiciado contra la API de ML por cada
 // publicación que tenga el vendedor.
-export async function getListingFees(token, siteId, { price, categoryId, listingTypeId = "gold_special", includeInstallments = true }) {
+export async function getListingFees(token, siteId, { price, categoryId, listingTypeId = "gold_special", tags, includeInstallments = true }) {
   const [classic, ...campaignResults] = await Promise.all([
-    fetchListingPrices(token, siteId, { price, categoryId, listingTypeId }),
+    fetchListingPrices(token, siteId, { price, categoryId, listingTypeId, tags }),
     ...(includeInstallments ? INSTALLMENT_CAMPAIGNS.map(c =>
       fetchListingPrices(token, siteId, { price, categoryId, listingTypeId: c.listingTypeId, tags: c.tags }).catch(() => null)
     ) : []),
@@ -390,16 +402,20 @@ export async function getShippingCostEstimate(token, mlUserId, { price, dimensio
 // endpoint correcto es /visits/items?ids={id}, que devuelve un objeto plano { "<item_id>": N }.
 export async function getItemStats(token, itemId) {
   const [item, visitsData, healthData] = await Promise.all([
-    apiGet(`/items/${itemId}?attributes=sold_quantity,price`, token),
+    apiGet(`/items/${itemId}?attributes=sold_quantity,price,category_id,listing_type_id,tags`, token),
     apiGet(`/visits/items?ids=${itemId}`, token).catch(() => null),
     apiGet(`/items/${itemId}/health`, token).catch(() => null),
   ]);
   return {
     soldQuantity: item?.sold_quantity || 0,
-    // Precio real y actual de la publicación en ML — puede diferir del que Ventaz tiene
-    // guardado en ml_listings.price (guardado al publicar/última vez que se tocó desde acá),
-    // por ejemplo si el vendedor lo cambió directo en Mercado Libre.
+    // Precio/categoría/tipo de publicación reales y actuales en ML — pueden diferir de lo que
+    // Ventaz tiene guardado en ml_listings (guardado al publicar/última vez que se tocó desde
+    // acá), por ejemplo si el vendedor cambió el precio o pasó a Premium directo en Mercado
+    // Libre. getListingStats usa estos, no los cacheados, para calcular la comisión real.
     price: item?.price ?? null,
+    categoryId: item?.category_id ?? null,
+    listingTypeId: item?.listing_type_id ?? null,
+    tags: item?.tags || [],
     visits: Number(visitsData?.[itemId] ?? 0),
     health: healthData ? { pct: healthData.health, level: healthData.level } : null,
   };
