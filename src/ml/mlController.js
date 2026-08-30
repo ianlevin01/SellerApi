@@ -5,6 +5,7 @@ import * as listingSvc from "./mlListingService.js";
 import { getValidToken } from "./mlTokenService.js";
 import { getSellerPlan, getPlanMlGraceHours } from "../utils/sellerPlan.js";
 import * as aiSvc from "./mlAiService.js";
+import * as statsSvc from "./mlStatsService.js";
 
 const SELLER_APP = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 const REDIRECT_BASE = `${SELLER_APP}/mercado-libre`;
@@ -200,6 +201,32 @@ export async function getSummary(req, res) {
     return res.json(await listingSvc.getSummary(req.seller.id));
   } catch (err) {
     console.error("[ml] getSummary:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// GET /seller/ml/stats?from=YYYY-MM-DD&to=YYYY-MM-DD&groupBy=day|week|month|hour
+export async function getStats(req, res) {
+  try {
+    const { from, to, groupBy } = req.query;
+    if (!from || !to) return res.status(400).json({ message: "from y to son requeridos" });
+    return res.json(await statsSvc.getStats(req.seller.id, { from, to, groupBy }));
+  } catch (err) {
+    console.error("[ml] getStats:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// POST /seller/ml/stats/goal  { monthKey: "2026-08", revenueGoal: 1000000 }
+export async function setStatsGoal(req, res) {
+  try {
+    const { monthKey, revenueGoal } = req.body;
+    if (!monthKey) return res.status(400).json({ message: "monthKey requerido" });
+    await statsSvc.setGoal(req.seller.id, monthKey, revenueGoal);
+    return res.json({ ok: true });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    console.error("[ml] setStatsGoal:", err.message);
     return res.status(500).json({ message: "Error" });
   }
 }

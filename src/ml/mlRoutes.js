@@ -28,6 +28,8 @@ router.post  ("/wallet/pay-blocked-debt", ctrl.payBlockedDebt);
 
 router.get   ("/listings",                      ctrl.getListings);
 router.get   ("/summary",                       ctrl.getSummary);
+router.get   ("/stats",                         ctrl.getStats);
+router.post  ("/stats/goal",                    ctrl.setStatsGoal);
 router.get   ("/shipping-address-status",       ctrl.getShippingAddressStatus);
 router.post  ("/shipping-address-ack",          ctrl.acknowledgeShippingAddress);
 router.get   ("/categories/suggest",            ctrl.suggestCategory);
