@@ -114,6 +114,13 @@ export async function getMyReserves(req, res) {
   } catch (err) { handleError(res, err); }
 }
 
+export async function getTopSelling(req, res) {
+  try {
+    const productIds = await productsService.getTopSellingProductIds();
+    return res.json({ productIds });
+  } catch (err) { handleError(res, err); }
+}
+
 export async function getShippingQuote(req, res) {
   try {
     const { postal_code } = req.query;

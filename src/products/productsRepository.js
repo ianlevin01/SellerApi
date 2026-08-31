@@ -267,3 +267,25 @@ export async function getSellerStockReserves(sellerId) {
   );
   return rows;
 }
+
+// Productos más vendidos de TODA la plataforma (todos los vendedores, todos los canales) en
+// los últimos N días — para destacar "más vendidos" en el catálogo de publicación de ML.
+// Se calcula en vivo: web_orders.created_at ya tiene índice (idx_web_orders_created) y la
+// ventana está acotada a pocos días, así que no hace falta ninguna tabla/agregado nuevo para
+// que esto sea eficiente. Solo cuenta ventas realmente confirmadas (no pending/rejected/
+// cancelled), para que un carrito abandonado no cuente como "se vende mucho".
+export async function getTopSellingProductIds({ days = 7, limit = 10 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT woi.product_id, SUM(woi.quantity)::int AS units_sold
+     FROM web_order_items woi
+     JOIN web_orders wo ON wo.id = woi.web_order_id
+     WHERE wo.created_at >= now() - ($1 || ' days')::interval
+       AND woi.product_id IS NOT NULL
+       AND wo.color IN ('paid', 'packaged', 'shipped')
+     GROUP BY woi.product_id
+     ORDER BY units_sold DESC
+     LIMIT $2`,
+    [days, limit]
+  );
+  return rows.map(r => r.product_id);
+}

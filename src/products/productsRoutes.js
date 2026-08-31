@@ -9,6 +9,7 @@ router.use(requireSeller);
 
 // Rutas fijas primero — deben ir ANTES de /:productId para que Express no las interprete como un id
 router.get   ("/",                                    productsController.getProducts);
+router.get   ("/top-selling",                         productsController.getTopSelling);
 router.post  ("/add-all",                             productsController.addAllProducts);
 router.post  ("/ai/generate-description",             productsController.generateDescription);
 
