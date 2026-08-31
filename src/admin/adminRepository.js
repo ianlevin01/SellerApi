@@ -272,7 +272,10 @@ export async function getMlSales({ from, to, chargeStatus } = {}) {
                'id', woi.id, 'productId', woi.product_id, 'name', woi.name,
                'quantity', woi.quantity, 'unitPrice', woi.unit_price,
                'mlItemId', woi.ml_item_id, 'variantLabel', woi.ml_variant_label,
-               'permalink', woi.ml_permalink, 'matchMethod', woi.ml_match_method
+               'permalink', woi.ml_permalink, 'matchMethod', woi.ml_match_method,
+               'imageKey', (SELECT pi.key FROM product_images pi
+                            WHERE pi.product_id = woi.product_id
+                            ORDER BY pi.created_at LIMIT 1)
              ) ORDER BY woi.id)
              FROM web_order_items woi WHERE woi.web_order_id = wo.id), '[]') AS items
     FROM web_orders wo

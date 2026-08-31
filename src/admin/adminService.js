@@ -7,6 +7,7 @@ import { getCotizacion } from "../payouts/payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getValidToken } from "../ml/mlTokenService.js";
 import * as mlSvc from "../ml/mlService.js";
+import { signKeys } from "../utils/s3Client.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -219,6 +220,19 @@ export async function getMlSales(filters) {
   const rows = await repo.getMlSales(filters);
   await backfillMissingShipmentInfo(rows);
   await refreshDispatchStatus(rows);
+
+  // La primera imagen interna (product_images, no la de la publicación real en ML) — una
+  // misma key puede repetirse muchas veces entre pedidos (mismo producto vendido varias
+  // veces), así que se firma cada key única una sola vez en vez de una vez por ítem.
+  const uniqueImageKeys = [...new Set(rows.flatMap(r => (r.items || []).map(i => i.imageKey).filter(Boolean)))];
+  const signedImageUrls = await signKeys(uniqueImageKeys);
+  const imageUrlByKey   = new Map(uniqueImageKeys.map((k, idx) => [k, signedImageUrls[idx]]));
+  for (const row of rows) {
+    for (const item of row.items || []) {
+      item.imageUrl = item.imageKey ? (imageUrlByKey.get(item.imageKey) || null) : null;
+      delete item.imageKey;
+    }
+  }
 
   const matureBySeller = new Set();
   const now = Date.now();
