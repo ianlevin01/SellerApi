@@ -248,8 +248,12 @@ export async function getConfig(sellerId) {
 export async function getOrders(sellerId) {
   const orders = await storeRepository.getOrders(sellerId);
 
-  // cotizacion solo se usa como fallback para órdenes sin unit_cost (anteriores a migración 018)
+  // cotizacion solo se usa como fallback para órdenes sin unit_cost (anteriores a migración 018,
+  // y TODAS las de Mercado Libre — el webhook nunca guarda unit_cost, ver mlWebhookController).
+  // planId es necesario ahí: calcShownCost sin este dato cae en su default ("inicial", sin
+  // descuento) y el costo queda inflado para cualquier vendedor en plan pro/max.
   let cotizacion = null;
+  const { plan_id: planId } = await getSellerPlan(sellerId);
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
     const orderPlatformPct = getSellerPlatformPct(Number(order.total));
@@ -264,10 +268,11 @@ export async function getOrders(sellerId) {
         // Costo bloqueado al momento del checkout — mismo valor que usa payoutsService
         baseCost = Number(item.unit_cost);
       } else {
-        // Fallback para órdenes anteriores a la migración 018
+        // Fallback para órdenes sin unit_cost — hay que pasar el plan real del vendedor,
+        // calcShownCost no lo adivina solo.
         if (cotizacion === null) cotizacion = await storeRepository.getCotizacion();
         const costUsd = await storeRepository.getCostUsdForProduct(item.product_id);
-        baseCost = calcShownCost(costUsd, cotizacion, 30);
+        baseCost = calcShownCost(costUsd, cotizacion, 30, planId);
       }
 
       // adjustedCost = baseCost × (1 + platformPct/100) / 1.30
