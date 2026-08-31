@@ -289,17 +289,3 @@ export async function getTopSellingProductIds({ days = 7, limit = 10 } = {}) {
   );
   return rows.map(r => r.product_id);
 }
-
-// Variantes informativas (color/tamaño) de una tanda de productos, en un solo query en vez de
-// uno por producto — pensado para listas/grillas (ver productsService.getProducts). Puramente
-// descriptivo: no toca stock, precio ni comprobantes, ver comentario en product_variants.
-export async function getVariantsByProductIds(productIds) {
-  if (!productIds.length) return [];
-  const { rows } = await pool.query(
-    `SELECT product_id, tipo, nombre, hex, alto, ancho, profundidad
-     FROM product_variants
-     WHERE product_id = ANY($1::uuid[])`,
-    [productIds]
-  );
-  return rows;
-}
