@@ -21,7 +21,10 @@ async function apiGet(path, token) {
   const data = await res.json();
   if (!res.ok) {
     console.error("[mlService] GET error", path, JSON.stringify(data));
-    throw new Error(`ML API: ${data.message || data.error || res.statusText}`);
+    const e = new Error(`ML API: ${data.message || data.error || res.statusText}`);
+    e.status = res.status;
+    e.mlError = data.error || null;
+    throw e;
   }
   return data;
 }
@@ -72,7 +75,7 @@ export async function refreshAccessToken(refreshToken) {
 
 export async function getUser(token) {
   const data = await apiGet("/users/me", token);
-  return { id: String(data.id), nickname: data.nickname, siteId: data.site_id };
+  return { id: String(data.id), nickname: data.nickname, siteId: data.site_id, tags: data.tags || [] };
 }
 
 // Crea un usuario de prueba de ML (comprador o vendedor, según cómo se use después) — no
@@ -99,12 +102,15 @@ async function apiWriteRaw(method, path, token, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
-function throwWriteError(method, path, data, statusText) {
+function throwWriteError(method, path, data, status) {
   console.error("[mlService] write error", method, path, JSON.stringify(data));
   const causeDetail = Array.isArray(data.cause) && data.cause.length
     ? " — " + data.cause.map(c => c.message || c.code).filter(Boolean).join("; ")
     : "";
-  throw new Error(`ML API: ${data.message || data.error || statusText}${causeDetail}`);
+  const e = new Error(`ML API: ${data.message || data.error || status}${causeDetail}`);
+  e.status = typeof status === "number" ? status : undefined;
+  e.mlError = data.error || null;
+  throw e;
 }
 
 async function apiWrite(method, path, token, body) {
@@ -158,6 +164,11 @@ export async function getCategoryAttributes(categoryId) {
       id: a.id, name: a.name, required: a.tags?.required || false,
       valueType: a.value_type, values: a.values,
       defaultUnit: normalizeUnit(a.default_unit) || normalizeUnit(a.allowed_units?.[0]),
+      // ML sigue marcando estos dos tags aunque ya no se usen para variations[] clásico — sirven
+      // como referencia para adivinar qué atributo es "el" de variación de esta categoría
+      // (típicamente COLOR) al armar una familia de variantes (ver publishVariants más abajo).
+      allowVariations: !!a.tags?.allow_variations,
+      variationAttribute: !!a.tags?.variation_attribute,
     }));
 }
 
@@ -203,9 +214,14 @@ export async function createItem(token, { title, categoryId, price, currencyId =
     family_name: String(title || "").slice(0, 60),
   });
 
+  // usedClassicFallback: si la categoría rechazó family_name, este ítem NO puede sumar
+  // variantes por precio (ver addVariantsToListing) — publishProduct/publishCombo guardan este
+  // dato en ml_listings.published_as_family para no tener que volver a adivinarlo después.
+  let usedClassicFallback = false;
   if (!result.ok && needsClassicTitleFallback(result.data)) {
     console.warn("[mlService] categoría usa el modelo clásico (title), reintentando sin family_name");
     result = await apiWriteRaw("POST", "/items", token, { ...baseBody, title });
+    usedClassicFallback = true;
   }
 
   if (!result.ok) throwWriteError("POST", "/items", result.data, result.status);
@@ -214,7 +230,16 @@ export async function createItem(token, { title, categoryId, price, currencyId =
   if (description) {
     await apiWrite("POST", `/items/${item.id}/description`, token, { plain_text: description }).catch(() => {});
   }
-  return { mlItemId: item.id, permalink: item.permalink, status: item.status };
+  // family_id: confirmado empíricamente (26/8) que TODO ítem creado con family_name termina
+  // teniendo uno, incluso publicado solo — pero no confirmamos si viene en esta misma respuesta
+  // de creación o recién al pedir el ítem de nuevo, así que si no vino acá se pide aparte. No
+  // aplica al fallback clásico (title): esos ítems nunca tienen family_id.
+  let familyId = usedClassicFallback ? null : (item.family_id || null);
+  if (!familyId && !usedClassicFallback) {
+    const fresh = await getItem(token, item.id).catch(() => null);
+    familyId = fresh?.family_id || null;
+  }
+  return { mlItemId: item.id, permalink: item.permalink, status: item.status, familyId, usedClassicFallback };
 }
 
 // Sube una imagen directo a la API de Pictures de ML (sin pasar por nuestro S3) — devuelve

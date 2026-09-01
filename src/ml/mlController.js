@@ -411,26 +411,32 @@ export async function suggestAttributes(req, res) {
   }
 }
 
-// POST /seller/ml/pictures/generate  { productName, description, imageUrls }
+// POST /seller/ml/pictures/generate  { productName, description, imageUrls, userPrompt }
 // Genera una foto con IA y la sube igual que una imagen subida a mano (mismo ref híbrido
 // ML-directo/S3 que ya usa uploadPicture), lista para usar en el wizard de publicar.
 // images.generate es texto→imagen puro (no acepta fotos de referencia), así que si hay fotos
 // reales del producto primero se describen con visión y esa descripción es la que se usa
 // para generar — evita que el resultado salga genérico/distinto al producto real.
+// userPrompt es lo que el vendedor escribió a mano sobre qué quiere ver en la foto (ej. "en
+// una mesada de cocina", "primer plano de la pantalla") — opcional, si no lo manda se usa el
+// default de fondo blanco de estudio (ver aiSvc.generateProductImage).
 export async function generatePicture(req, res) {
   try {
-    const { productName, description, imageUrls } = req.body;
+    const { productName, description, imageUrls, userPrompt } = req.body;
     if (!productName) return res.status(400).json({ message: "Falta productName" });
     const visualDescription = await aiSvc.describeProductForImageGen(productName, imageUrls)
       .catch(err => { console.error("[ml] describeProductForImageGen:", err.message); return ""; });
     const finalDescription = [visualDescription, description].filter(Boolean).join(". ");
-    const buffer = await aiSvc.generateProductImage(productName, finalDescription);
+    const buffer = await aiSvc.generateProductImage(productName, finalDescription, userPrompt?.trim() || null);
     const result = await listingSvc.uploadPictureForSeller(req.seller.id, {
       buffer, originalname: `ia-${Date.now()}.png`, mimetype: "image/png",
     });
     return res.json({ ref: result.ref, previewUrl: `data:image/png;base64,${buffer.toString("base64")}` });
   } catch (err) {
-    console.error("[ml] generatePicture:", err.message);
+    // status/code acá son los que manda la SDK de OpenAI (ej. content_policy_violation,
+    // rate_limit_exceeded) — se loguean aparte porque err.message solo no siempre alcanza
+    // para diagnosticar cuál de las dos llamadas (describir fotos o generar) fue la que falló.
+    console.error("[ml] generatePicture:", err.message, "status:", err.status, "code:", err.code);
     return res.status(500).json({ message: err.message || "No se pudo generar la imagen" });
   }
 }
@@ -446,6 +452,57 @@ export async function publishProduct(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishProduct:", err.message);
+    return res.status(err.status || 500).json({
+      message: err.message || "Error",
+      ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
+      ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+    });
+  }
+}
+
+// ── Variantes ──────────────────────────────────────────────────
+
+// GET /seller/ml/variant-eligibility
+export async function getVariantEligibility(req, res) {
+  try {
+    return res.json(await listingSvc.getVariantEligibility(req.seller.id));
+  } catch (err) {
+    console.error("[ml] getVariantEligibility:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// POST /seller/ml/variant-eligibility/recheck
+export async function recheckVariantEligibility(req, res) {
+  try {
+    return res.json(await listingSvc.getVariantEligibility(req.seller.id, { forceRefresh: true }));
+  } catch (err) {
+    console.error("[ml] recheckVariantEligibility:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// GET /seller/ml/listings/:mlItemId/pictures
+export async function getListingPictures(req, res) {
+  try {
+    return res.json(await listingSvc.getListingPictures(req.seller.id, req.params.mlItemId));
+  } catch (err) {
+    console.error("[ml] getListingPictures:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// POST /seller/ml/listings/:mlItemId/variants
+export async function addVariants(req, res) {
+  try {
+    const card = await walletSvc.getCardStatus(req.seller.id);
+    if (!card.hasCard) {
+      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    }
+    const result = await listingSvc.addVariantsToListing(req.seller.id, req.params.mlItemId, req.body);
+    return res.json(result);
+  } catch (err) {
+    console.error("[ml] addVariants:", err.message);
     return res.status(err.status || 500).json({
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),

@@ -48,6 +48,26 @@ export async function getConnection(sellerId) {
   return rows[0] || null;
 }
 
+// Elegibilidad cacheada para el modelo "User Products" (precio por variante) — se guarda en la
+// misma fila de ml_connections porque es un dato de LA CUENTA de ML conectada, no del seller
+// en sí (ver deleteConnection: se resetea al desconectar, no debe sobrevivir a un cambio de
+// cuenta).
+export async function getConnectionVariantEligibility(sellerId) {
+  const { rows } = await pool.query(
+    `SELECT user_product_seller, user_product_checked_at
+     FROM ml_connections WHERE seller_id = $1 AND ml_user_id IS NOT NULL`,
+    [sellerId]
+  );
+  return rows[0] || null;
+}
+
+export async function updateVariantEligibility(sellerId, { eligible, checkedAt }) {
+  await pool.query(
+    `UPDATE ml_connections SET user_product_seller = $1, user_product_checked_at = $2 WHERE seller_id = $3`,
+    [eligible, checkedAt, sellerId]
+  );
+}
+
 export async function getConnectionByMlUserId(mlUserId) {
   const { rows } = await pool.query(
     `SELECT * FROM ml_connections WHERE ml_user_id = $1`,
@@ -81,7 +101,8 @@ export async function deleteConnection(sellerId) {
   await pool.query(
     `UPDATE ml_connections
      SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL,
-         ml_user_id = NULL, ml_nickname = NULL, site_id = NULL, updated_at = now()
+         ml_user_id = NULL, ml_nickname = NULL, site_id = NULL, updated_at = now(),
+         user_product_seller = NULL, user_product_checked_at = NULL
      WHERE seller_id = $1`,
     [sellerId]
   );
@@ -177,15 +198,46 @@ export async function updateComboProducts(comboId, products) {
 // momento de publicar — necesario porque ml_connections guarda una sola cuenta por vendedor
 // (se pisa si reconecta otra distinta), así que sin esta foto no habría forma de saber
 // después con qué cuenta se publicó cada cosa si el vendedor alternó entre varias.
-export async function createListing(sellerId, { productId, comboId, mlItemId, categoryId, status, permalink, price, mlCategoryId, attributes, shippingFree, mlAccountId, mlAccountNickname }) {
+export async function createListing(sellerId, {
+  productId, comboId, mlItemId, categoryId, status, permalink, price, mlCategoryId, attributes, shippingFree, mlAccountId, mlAccountNickname,
+  mlFamilyId, variantAttributeId, variantAttributeName, variantValue, isVariantRoot, publishedAsFamily,
+}) {
   const { rows } = await pool.query(
-    `INSERT INTO ml_listings (seller_id, product_id, ml_combo_id, ml_item_id, category_id, status, permalink, price, ml_category_id, attributes, shipping_free, ml_account_id, ml_account_nickname)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `INSERT INTO ml_listings (
+       seller_id, product_id, ml_combo_id, ml_item_id, category_id, status, permalink, price, ml_category_id, attributes, shipping_free, ml_account_id, ml_account_nickname,
+       ml_family_id, variant_attribute_id, variant_attribute_name, variant_value, is_variant_root, published_as_family
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
      RETURNING *`,
     [sellerId, productId || null, comboId || null, mlItemId, categoryId || null, status || "active", permalink || null,
-     price ?? null, mlCategoryId || null, JSON.stringify(attributes || []), !!shippingFree, mlAccountId || null, mlAccountNickname || null]
+     price ?? null, mlCategoryId || null, JSON.stringify(attributes || []), !!shippingFree, mlAccountId || null, mlAccountNickname || null,
+     mlFamilyId || null, variantAttributeId || null, variantAttributeName || null, variantValue || null,
+     !!isVariantRoot, publishedAsFamily ?? null]
   );
   return rows[0];
+}
+
+// Como getListingByMlItemId, pero con dueño verificado — a diferencia de pause/reactivate (que
+// ya vienen de mucho antes y confían en que ML rechace un ml_item_id ajeno), esta es una
+// mutación nueva y no hay razón para heredar ese mismo criterio menos estricto.
+export async function getListingForVariants(mlItemId, sellerId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM ml_listings WHERE ml_item_id = $1 AND seller_id = $2`,
+    [mlItemId, sellerId]
+  );
+  return rows[0] || null;
+}
+
+// Taguea la fila raíz cuando se une a una familia por primera vez (antes no tenía
+// variant_value/ml_family_id porque era una publicación suelta) — no toca nada más de la fila.
+export async function setListingVariantInfo(mlItemId, { mlFamilyId, variantAttributeId, variantAttributeName, variantValue }) {
+  await pool.query(
+    `UPDATE ml_listings
+     SET ml_family_id = $1, variant_attribute_id = $2, variant_attribute_name = $3, variant_value = $4,
+         is_variant_root = true, updated_at = now()
+     WHERE ml_item_id = $5`,
+    [mlFamilyId || null, variantAttributeId, variantAttributeName, variantValue, mlItemId]
+  );
 }
 
 export async function updateListingStatus(mlItemId, status, pauseReason = null) {

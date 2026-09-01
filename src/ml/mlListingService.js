@@ -518,6 +518,20 @@ export async function getVariantEligibility(sellerId, { forceRefresh = false } =
   return { connected: true, eligible, checkedAt };
 }
 
+// Fotos que la publicación tiene HOY en Mercado Libre — no necesariamente las mismas que las
+// del catálogo de Ventaz: la publicación pudo haberse editado directo en ML después de
+// publicada (o traer fotos subidas manualmente antes de existir Ventaz). Se usa para que la
+// vista de "agregar variantes" ofrezca por default lo que realmente está publicado en vez del
+// pool genérico del catálogo, que puede ser distinto (de menos o más fotos, y en otro orden).
+export async function getListingPictures(sellerId, mlItemId) {
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const root = await repo.getListingForVariants(mlItemId, sellerId);
+  if (!root) { const e = new Error("Publicación no encontrada"); e.status = 404; throw e; }
+  const item = await svc.getItem(token, mlItemId);
+  return (item.pictures || []).map(p => ({ id: p.id, url: p.secure_url || p.url }));
+}
+
 // Agrega variantes (ej. colores) a una publicación existente, formando (o sumándose a) una
 // familia de Mercado Libre. Cada variante es un ítem propio e independiente (modelo "User
 // Products" — el mismo que publishProduct ya usa por defecto vía family_name), nunca el array
