@@ -246,7 +246,7 @@ export async function getMlSales(filters) {
   const today    = toArgDateString(new Date());
   const tomorrow = toArgDateString(new Date(Date.now() + 86400000));
 
-  return rows.map(row => {
+  const withComputedFields = rows.map(row => {
     const dispatchDay = toArgDateString(row.ml_dispatch_expected_date);
     const isDispatched = !!row.ml_dispatched_at;
     return {
@@ -269,6 +269,43 @@ export async function getMlSales(filters) {
       dispatchOverdue: !isDispatched && !!dispatchDay && dispatchDay < today,
     };
   });
+
+  return groupByShipment(withComputedFields);
+}
+
+// Mercado Libre arma UN solo envío/etiqueta física a partir de VARIOS pedidos distintos del
+// mismo vendedor (ej. el comprador agrega dos productos distintos al carrito y paga una sola
+// vez) — cada producto queda como su propio ml_order_id, pero todos comparten el mismo
+// ml_shipment_id. Sin agrupar acá, el panel los mostraba como ventas separadas sin ninguna
+// forma de saber que en realidad es un solo paquete — riesgo real de despachar solo una parte.
+// id/orderIds para imprimir: alcanza con el id del primer pedido del grupo — getLabelsPdfForOrders
+// ya resuelve cualquiera de ellos a SU ml_shipment_id real y trae la etiqueta completa del
+// paquete entero, no solo la parte de ese pedido puntual.
+function groupByShipment(sales) {
+  const byShipment = new Map();
+  const result = [];
+  for (const sale of sales) {
+    const key = sale.ml_shipment_id;
+    const existing = key ? byShipment.get(key) : null;
+    if (!existing) {
+      const grouped = { ...sale, numeros: [sale.numero], groupedIds: [sale.id] };
+      if (key) byShipment.set(key, grouped);
+      result.push(grouped);
+      continue;
+    }
+    existing.numeros.push(sale.numero);
+    existing.groupedIds.push(sale.id);
+    existing.items = [...(existing.items || []), ...(sale.items || [])];
+    existing.total = Number(existing.total) + Number(sale.total);
+    existing.ml_cost_amount = Number(existing.ml_cost_amount || 0) + Number(sale.ml_cost_amount || 0);
+    // Si cualquier pedido del grupo falló o está sin cobrar, el grupo entero se muestra así —
+    // el admin tiene que poder ver que algo ahí necesita atención, no solo la parte que sí está bien.
+    if (sale.ml_charge_status === "failed" || existing.ml_charge_status === "failed") existing.ml_charge_status = "failed";
+    else if (sale.ml_charge_status === "pending" || existing.ml_charge_status === "pending") existing.ml_charge_status = "pending";
+    existing.shippable = existing.shippable && sale.shippable;
+    existing.needsProductReview = existing.needsProductReview || sale.needsProductReview;
+  }
+  return result;
 }
 
 

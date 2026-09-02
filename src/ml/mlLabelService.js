@@ -71,9 +71,14 @@ export async function getLabelsPdfForOrders(orderIds, { force = false } = {}) {
     }
     if (shipmentIds.length === 0) continue;
 
+    // Un mismo shipment puede venir de más de un pedido de Ventaz (ML agrupa varios pedidos
+    // del mismo vendedor en un solo envío/etiqueta) — sin este dedup, pedirle el mismo
+    // shipment_id dos veces a ML duplica la página de esa etiqueta en el PDF final.
+    const uniqueShipmentIds = [...new Set(shipmentIds)];
+
     // Máximo 50 shipment_ids por request — límite propio de la API de ML.
-    for (let i = 0; i < shipmentIds.length; i += 50) {
-      const batch = shipmentIds.slice(i, i + 50);
+    for (let i = 0; i < uniqueShipmentIds.length; i += 50) {
+      const batch = uniqueShipmentIds.slice(i, i + 50);
       try {
         const pdfBuffer = await svc.getShipmentLabelsPdf(token, batch);
         const doc = await PDFDocument.load(pdfBuffer);
