@@ -362,29 +362,77 @@ function fillMissingUnitsPerPack(attributes) {
   return [...attributes, { id: "UNITS_PER_PACK", value_name: "1" }];
 }
 
+// Confirma (y refuerza con un PUT si hace falta) que la campaña de cuotas pedida haya quedado
+// realmente activa en el ítem creado. El caso que motivó esto (item MLA3911865380, cuota-simple-3
+// nunca aplicaba) resultó ser un tag discontinuado por Mercado Libre — no un problema de timing
+// POST vs PUT — confirmado directo con su equipo de desarrolladores: "Cuota Simple" ya no existe,
+// las campañas vigentes son 3x_campaign/9x_campaign/12x_campaign (ver INSTALLMENT_CAMPAIGNS en
+// mlService.js). Con los tags correctos esto debería ser casi siempre un no-op (el POST de
+// creación ya lo deja bien) — se mantiene el refuerzo por PUT + relectura como red de seguridad
+// ante cualquier otro caso puntual de cuenta/categoría que rechace la campaña, en vez de asumir
+// en silencio que si no hubo excepción quedó aplicada.
+async function ensureInstallmentTags(token, mlItemId, requestedTags) {
+  const requestedTag = requestedTags?.[0];
+  if (!requestedTag) return true; // "6 cuotas"/no-campaign no manda tag — nada que verificar
+
+  let fresh = await svc.getItem(token, mlItemId).catch(() => null);
+  if (fresh?.tags?.includes(requestedTag)) return true; // ya quedó aplicado en la creación
+
+  await svc.updateItem(token, mlItemId, { tags: [...(fresh?.tags || []), requestedTag] })
+    .catch(err => console.warn("[ml] no se pudo reforzar la campaña de cuotas con un PUT:", err.message));
+
+  fresh = await svc.getItem(token, mlItemId).catch(() => fresh);
+  return !!fresh?.tags?.includes(requestedTag);
+}
+
 // shippingFreeUsed viaja en el resultado porque el reintento de más abajo puede terminar
 // publicando con un envío gratis distinto al que pidió el vendedor — sin esto, lo que
 // guardamos en nuestra base quedaría desincronizado de lo que realmente tiene la publicación
-// en Mercado Libre.
-async function createMlItem(token, payload) {
+// en Mercado Libre. installmentTagsApplied es la misma idea aplicada a la campaña de cuotas.
+// create es inyectable (default svc.createItem, publishProduct/publishCombo no lo tocan y
+// siguen exactamente igual que antes) para que publishCatalogProduct pueda reusar toda esta
+// lógica de reintentos con svc.createCatalogItem en vez de duplicarla.
+async function createMlItem(token, payload, { create = svc.createItem } = {}) {
   try {
-    const item = await svc.createItem(token, payload);
-    return { ...item, shippingFreeUsed: !!payload.shippingFree };
+    const item = await create(token, payload);
+    const tagsApplied = await ensureInstallmentTags(token, item.mlItemId, payload.tags);
+    return { ...item, shippingFreeUsed: !!payload.shippingFree, ...(tagsApplied ? {} : { installmentTagsApplied: false }) };
   } catch (err) {
+    // "seller.unable_to_list" es el error genérico que manda ML cuando algún chequeo de la
+    // cuenta (teléfono/dirección/identidad pendiente de validar, etc.) bloqueó la publicación —
+    // el detalle real viaja en un campo "cause" que ML pide cruzar contra el status de la cuenta,
+    // no hay forma de traducirlo de antemano para todos los casos posibles. En la práctica, este
+    // chequeo quedó viejo/cacheado unos segundos: un vendedor real reintentó sin cambiar nada y
+    // publicó bien al toque. Reintentamos una vez solos, con una pequeña espera, antes de
+    // mostrarle cualquier error al vendedor.
+    if (err.mlError === "seller.unable_to_list") {
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const item = await create(token, payload);
+        const tagsApplied = await ensureInstallmentTags(token, item.mlItemId, payload.tags);
+        return { ...item, shippingFreeUsed: !!payload.shippingFree, ...(tagsApplied ? {} : { installmentTagsApplied: false }) };
+      } catch {
+        const e = new Error("Mercado Libre no permitió publicar en este momento. Puede deberse a una verificación de cuenta pendiente (teléfono, dirección o identidad) — revisá las notificaciones de tu cuenta de Mercado Libre. Si no ves nada pendiente, esperá un momento y volvé a intentar.");
+        e.status = 422;
+        throw e;
+      }
+    }
+
     // ML manda un texto en inglés poco claro cuando la cuenta no tiene Mercado Envíos
     // activo (necesario porque siempre publicamos con shipping.mode = "me2") — lo
     // traducimos a algo que el vendedor pueda accionar directamente en su cuenta de ML.
-    //if (/mode me1|mercado.?envios/i.test(err.message)) {
-      //const e = new Error("Tu cuenta de Mercado Libre no tiene Mercado Envíos activado. Entrá a mercadolibre.com.ar → Configuración → Envíos y activalo antes de publicar.");
-      //e.status = 400;
-      //throw e;
-    //}
+    if (/mode me1|mercado.?envios/i.test(err.message)) {
+      const e = new Error("Tu cuenta de Mercado Libre no tiene Mercado Envíos activado. Entrá a mercadolibre.com.ar → Configuración → Envíos y activalo antes de publicar.");
+      e.status = 400;
+      throw e;
+    }
     // Para algunas categorías/precios, Mercado Libre exige envío gratis obligatorio (según
     // categoría y monto) — si el vendedor no lo tildó y ML lo rechaza por eso, reintentamos
     // una vez solos con envío gratis en vez de hacerle adivinar el motivo del error.
     if (!payload.shippingFree && /free.?shipping|envío gratis|shipping.*mandatory/i.test(err.message)) {
-      const item = await svc.createItem(token, { ...payload, shippingFree: true });
-      return { ...item, shippingFreeUsed: true };
+      const item = await create(token, { ...payload, shippingFree: true });
+      const tagsApplied = await ensureInstallmentTags(token, item.mlItemId, payload.tags);
+      return { ...item, shippingFreeUsed: true, ...(tagsApplied ? {} : { installmentTagsApplied: false }) };
     }
 
     // La campaña de cuotas elegida (tags) puede no estar habilitada para esta cuenta/categoría
@@ -393,7 +441,7 @@ async function createMlItem(token, payload) {
     // la publicación entera por una preferencia de financiación.
     if (payload.tags?.length) {
       console.warn("[ml] no se pudo aplicar la campaña de cuotas, reintentando sin tags:", err.message);
-      const item = await svc.createItem(token, { ...payload, tags: [] });
+      const item = await create(token, { ...payload, tags: [] });
       return { ...item, shippingFreeUsed: !!payload.shippingFree, installmentTagsApplied: false };
     }
 
@@ -478,13 +526,18 @@ export async function publishProduct(sellerId, productId, config) {
     tags: config.installmentTags || [],
   });
 
-  return repo.createListing(sellerId, {
+  const listing = await repo.createListing(sellerId, {
     productId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
     mlFamilyId: item.familyId, publishedAsFamily: !item.usedClassicFallback,
   });
+  // No es columna de ml_listings (createListing hace RETURNING *, así que se pierde si no se
+  // reagrega acá) — false solo cuando createMlItem tuvo que reintentar sin la campaña de cuotas
+  // elegida (ver ese catch). El wizard estimó "Recibís" con esa campaña activa; si ML la rechazó
+  // en el momento de publicar, el cargo real termina siendo más alto que el que vio el vendedor.
+  return { ...listing, installmentTagsApplied: item.installmentTagsApplied };
 }
 
 // ── Variantes (modelo "User Products" de ML) ────────────────────
@@ -820,21 +873,42 @@ export async function publishCombo(sellerId, comboId, config) {
     tags: config.installmentTags || [],
   });
 
-  return repo.createListing(sellerId, {
+  const listing = await repo.createListing(sellerId, {
     comboId, mlItemId: item.mlItemId, permalink: item.permalink,
     status: "active", price: config.price, mlCategoryId: config.mlCategoryId,
     attributes, shippingFree: item.shippingFreeUsed,
     mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
     mlFamilyId: item.familyId, publishedAsFamily: !item.usedClassicFallback,
   });
+  // Ver el mismo comentario en publishProduct — se pierde en el RETURNING * de createListing
+  // si no se reagrega acá.
+  return { ...listing, installmentTagsApplied: item.installmentTagsApplied };
 }
 
 // Empuja la cantidad disponible actual a ML — se usa desde el job de sync de stock para que
 // la publicación no muestre más unidades de las que realmente quedan del pool compartido.
+//
+// Si ML devuelve 403 "access_denied", el ítem ya no es una publicación activa del lado de ML
+// (cerrada por el vendedor directo en Mercado Libre, fuera de Ventaz — no hay forma de que
+// Ventaz se entere en el momento, no hay webhook para esto). Confirmado empíricamente contra
+// cuentas reales: en TODOS los casos observados, el mismo ml_item_id no aparecía en
+// GET /users/{id}/items/search?status=active de ML. Sin este chequeo, el job reintentaba (y
+// fallaba) cada 15 minutos para siempre. Se marca 'closed' (ya contemplado en el schema —
+// setAllListingsStatus ya excluye 'closed' de sus bulk updates) para que
+// getActiveListingsWithStock dejar de traerla y el job la ignore de acá en adelante.
 export async function syncStockToMl(sellerId, mlItemId, availableQuantity) {
   const token = await getValidToken(sellerId);
   if (!token) return;
-  await svc.updateItem(token, mlItemId, { available_quantity: Math.max(0, Math.round(availableQuantity)) });
+  try {
+    await svc.updateItem(token, mlItemId, { available_quantity: Math.max(0, Math.round(availableQuantity)) });
+  } catch (err) {
+    if (err.status === 403 && err.mlError === "access_denied") {
+      console.warn(`[ml] ${mlItemId} ya no está activa en Mercado Libre (cerrada fuera de Ventaz) — marcando 'closed'`);
+      await repo.updateListingStatus(mlItemId, "closed", null);
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function pauseListing(sellerId, mlItemId, reason = "manual") {

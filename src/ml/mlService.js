@@ -204,8 +204,9 @@ export async function createItem(token, { title, categoryId, price, currencyId =
     pictures: pictures || [],
     attributes: attributes || [],
     shipping: { mode: "me2", free_shipping: !!shippingFree, ...(dimensions ? { dimensions } : {}) },
-    // Activa la campaña de cuotas elegida (cuota-simple-3/6/9/12, pcj-co-funded, etc.) — sin
-    // esto el ítem se crea con el listing_type_id correcto pero SIN la campaña puntual habilitada.
+    // Activa la campaña de cuotas elegida (3x_campaign/9x_campaign/12x_campaign, pcj-co-funded,
+    // etc. — ver INSTALLMENT_CAMPAIGNS) — sin esto el ítem se crea con el listing_type_id
+    // correcto pero SIN la campaña puntual habilitada.
     ...(tags?.length ? { tags } : {}),
   };
 
@@ -320,31 +321,32 @@ async function fetchListingPrices(token, siteId, { price, categoryId, listingTyp
   return Array.isArray(data) ? data[0] : data;
 }
 
-// Campañas reales de cuotas de ML (confirmadas contra la documentación oficial de
-// "Campaigns with installments for Marketplace"). Cada una es una combinación puntual de
-// listing_type_id + tag — no existe un único endpoint que devuelva "todas las opciones de
-// cuotas" de una, hay que pedir cada combinación por separado y quedarnos con las que
-// respondan (no todas las categorías/cuentas tienen todas las campañas habilitadas).
+// Campañas reales de cuotas de ML. Cada una es una combinación puntual de listing_type_id + tag
+// — no existe un único endpoint que devuelva "todas las opciones de cuotas" de una, hay que
+// pedir cada combinación por separado (fetchListingPrices) y quedarnos con las que respondan (no
+// todas las categorías/cuentas tienen todas las campañas habilitadas).
 //
-// "cuota-simple-9"/"cuota-simple-12" ya no están en la documentación vigente (ML las recortó
-// a 3/6 en 2025), pero algunas categorías puntuales (ML lo muestra en su propio flujo) todavía
-// las ofrecen — se intentan igual, sin asumir que van a existir; si la cuenta/categoría no
-// las tiene habilitadas, ML devuelve error y simplemente se excluyen de la lista.
+// "Cuota Simple" (cuota-simple-3/6/9/12) fue discontinuada por Mercado Libre — confirmado
+// directo con su equipo de desarrolladores (05/09) tras ver que ese tag siempre volvía
+// item.tags.not_modifiable, tanto al crear como al editar un ítem, en cualquier cuenta. Las
+// campañas vigentes se confirman con GET /special_installments/campaigns?category_id=... y son
+// 3x_campaign/9x_campaign/12x_campaign para gold_pro (channel "marketplace", no "mshops" — ese
+// es un programa distinto, de Mercado Shops). "6 cuotas" no tiene tag propio: es el comportamiento
+// default de gold_pro sin ninguna campaña activa (campaign_id "no-campaign" en ese mismo endpoint).
 const INSTALLMENT_CAMPAIGNS = [
-  { id: "pcj",  label: "3 a 12 cuotas con interés bajo",           listingTypeId: "gold_special", tags: "pcj-co-funded",   badge: "Cuota promocionada", desc: "Tus compradores pagan hasta 70% menos del interés que cobran los bancos." },
-  { id: "cs3",  label: "3 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-3",  desc: null },
-  { id: "cs6",  label: "6 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-6",  badge: "Cuota recomendada", desc: "Esta opción aumenta tus posibilidades de vender." },
-  { id: "cs9",  label: "9 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "cuota-simple-9",  desc: null },
-  { id: "cs12", label: "12 cuotas al mismo precio que publicaste", listingTypeId: "gold_pro",      tags: "cuota-simple-12", desc: null },
+  { id: "pcj",  label: "3 a 12 cuotas con interés bajo",           listingTypeId: "gold_special", tags: "pcj-co-funded", badge: "Cuota promocionada", desc: "Tus compradores pagan hasta 70% menos del interés que cobran los bancos." },
+  { id: "cs3",  label: "3 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "3x_campaign",  desc: null },
+  { id: "cs6",  label: "6 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: null,           badge: "Cuota recomendada", desc: "Esta opción aumenta tus posibilidades de vender." },
+  { id: "cs9",  label: "9 cuotas al mismo precio que publicaste",  listingTypeId: "gold_pro",      tags: "9x_campaign",  desc: null },
+  { id: "cs12", label: "12 cuotas al mismo precio que publicaste", listingTypeId: "gold_pro",      tags: "12x_campaign", desc: null },
 ];
 
-// Tags que Mercado Libre deja en el propio ítem cuando tiene una campaña de cuotas activa
-// (confirmado contra la doc oficial "Campaigns with installments for Marketplace" —
-// "Respect the listing_type + tag relationship"). Necesarios para pedirle a /listing_prices
-// el cargo por vender REAL de una publicación gold_pro ya existente: sin el tag correcto, ML
-// asume "6 cuotas al mismo precio" (el único plan de gold_pro que NO deja tag en /items), que
-// puede no ser la campaña realmente activa y da un cargo mucho más alto que el real.
-export const KNOWN_INSTALLMENT_TAGS = ["3x_campaign", "cuota-simple-3", "cuota-simple-6", "cuota-simple-paid-by-buyer", "pcj-co-funded"];
+// Tags que Mercado Libre deja en el propio ítem cuando tiene una campaña de cuotas activa.
+// Necesarios para pedirle a /listing_prices el cargo por vender REAL de una publicación gold_pro
+// ya existente: sin el tag correcto, ML asume "6 cuotas al mismo precio" (no-campaign, el único
+// plan de gold_pro que no deja tag en /items), que puede no ser la campaña realmente activa y da
+// un cargo mucho más alto que el real.
+export const KNOWN_INSTALLMENT_TAGS = ["3x_campaign", "9x_campaign", "12x_campaign", "pcj-co-funded"];
 
 // Desglose de comisión/costos de ML para un precio+categoría — lo mismo que ML muestra
 // como "Recibís" al publicar. No hace falta el ítem creado, solo precio/categoría.
@@ -382,9 +384,10 @@ export async function getListingFees(token, siteId, { price, categoryId, listing
         saleFeeAmount: fee,
         netAmount:     Number(price) - fee,
         // Se devuelven para que el publish pueda mandar exactamente esto y activar la campaña
-        // elegida en el ítem creado (POST /items con listing_type_id + tags).
+        // elegida en el ítem creado (POST /items con listing_type_id + tags). "6 cuotas" no
+        // tiene tag (ver comentario de INSTALLMENT_CAMPAIGNS) — sin este guard quedaba [null].
         listingTypeId: campaign.listingTypeId,
-        tags:          [campaign.tags],
+        tags:          campaign.tags ? [campaign.tags] : [],
       };
     });
 
