@@ -156,10 +156,33 @@ Respondé SOLO JSON: { "valores": { "<id_del_atributo>": "<valor>", ... } }`,
 
   try {
     const parsed = JSON.parse(res.choices[0].message.content);
-    return parsed.valores || {};
+    return filterValidSuggestions(parsed.valores || {}, attrDefs);
   } catch {
     return {};
   }
+}
+
+// El modelo a veces ignora la instrucción de omitir lo que no sabe y en su lugar inventa un
+// texto tipo "No especificado" — eso pasaba filtro porque attrValues[a.id]?.trim() lo toma como
+// un valor real cargado por el vendedor, y termina viajando tal cual a Mercado Libre, que lo
+// rechaza (atributos de lista) o lo descarta con error (atributos numéricos, que exigen un
+// número + unidad). Se valida acá contra las opciones/tipo real de cada atributo antes de
+// devolver la sugerencia, en vez de confiar en que el modelo se auto-contuvo.
+function filterValidSuggestions(raw, attrDefs) {
+  const byId = new Map(attrDefs.map(a => [a.id, a]));
+  const values = {};
+  for (const [id, value] of Object.entries(raw)) {
+    const def = byId.get(id);
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (!def || !trimmed) continue;
+    if (def.values?.length) {
+      if (!def.values.some(v => v.name === trimmed)) continue;
+    } else if (def.valueType === "number_unit") {
+      if (!/^\d/.test(trimmed)) continue;
+    }
+    values[id] = trimmed;
+  }
+  return values;
 }
 
 // La API de generación de imágenes (images.generate) no acepta fotos de referencia — es
