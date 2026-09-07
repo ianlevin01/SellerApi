@@ -175,8 +175,11 @@ function filterValidSuggestions(raw, attrDefs) {
     const def = byId.get(id);
     const trimmed = typeof value === "string" ? value.trim() : "";
     if (!def || !trimmed) continue;
-    if (def.values?.length) {
-      if (!def.values.some(v => v.name === trimmed)) continue;
+    // "values" viene poblado en atributos que igual aceptan texto libre (ej. BRAND es "string"
+    // con marcas comunes sugeridas, pero acepta cualquier texto — confirmado contra la API real).
+    // Solo "list" es un enum cerrado de verdad, donde SÍ hay que exigir un match exacto.
+    if (def.valueType === "list") {
+      if (!def.values?.some(v => v.name === trimmed)) continue;
     } else if (def.valueType === "number_unit") {
       if (!/^\d/.test(trimmed)) continue;
     }
