@@ -295,6 +295,35 @@ async function checkMlListingLimit(sellerId, count = 1) {
   }
 }
 
+// Un valor de atributo puede llegar corrompido desde el wizard por motivos ajenos a esta función
+// (una sugerencia de IA que no siguió la instrucción de omitir lo que no sabe, o un
+// <input type="number"> que muestra vacío en pantalla pero sigue guardando en memoria un valor
+// no numérico cargado antes — confirmado, el vendedor "borra" el campo y el navegador lo pinta
+// vacío sin disparar onChange porque para un input numérico no había nada que borrar) — se valida
+// acá, justo antes de hablar con Mercado Libre, en vez de confiar en que el wizard nunca mande
+// algo inválido. Mismo criterio que el validador de sugerencias de IA (mlAiService.js): un
+// atributo de lista tiene que matchear EXACTO una opción real de la categoría, uno numérico
+// tiene que empezar con un número. Compartida por publishProduct y publishCombo.
+async function stripInvalidAttributeValues(categoryId, attributes) {
+  if (!attributes.length) return attributes;
+  let categoryAttrs;
+  try {
+    categoryAttrs = await svc.getRawCategoryAttributes(categoryId);
+  } catch {
+    return attributes; // si no se puede consultar, seguimos sin tocar nada — que ML valide como siempre
+  }
+  const byId = new Map(categoryAttrs.map(a => [a.id, a]));
+  return attributes.filter(a => {
+    const def = byId.get(a.id);
+    if (!def) return true; // no tenemos su definición — no tocar, que ML valide como siempre
+    const value = String(a.value_name ?? "").trim();
+    if (!value) return false;
+    if (def.values?.length) return def.values.some(v => v.name === value);
+    if (def.value_type === "number_unit") return /^\d/.test(value);
+    return true;
+  });
+}
+
 // Crea el ítem en ML traduciendo el error de "Mercado Envíos no activado" a algo accionable.
 // Compartido por publishProduct y publishCombo.
 // GTIN (código de barras) no viene marcado como "required" en la categoría — ML lo maneja
@@ -508,7 +537,8 @@ export async function publishProduct(sellerId, productId, config) {
     throw e;
   }
 
-  let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  let attributes = await stripInvalidAttributeValues(config.mlCategoryId, config.attributes || []);
+  attributes = await fillMissingGtinExemption(config.mlCategoryId, attributes);
   attributes = fillMissingPackageDimensions(attributes, product.weight_grams, product.volume_cm3);
   attributes = fillMissingUnitsPerPack(attributes);
 
@@ -855,7 +885,8 @@ export async function publishCombo(sellerId, comboId, config) {
     throw e;
   }
   const comboName = await repo.getComboName(comboId);
-  let attributes = await fillMissingGtinExemption(config.mlCategoryId, config.attributes || []);
+  let attributes = await stripInvalidAttributeValues(config.mlCategoryId, config.attributes || []);
+  attributes = await fillMissingGtinExemption(config.mlCategoryId, attributes);
   attributes = fillMissingPackageDimensions(attributes, totalWeight, totalVolume);
   attributes = fillMissingUnitsPerPack(attributes);
 
