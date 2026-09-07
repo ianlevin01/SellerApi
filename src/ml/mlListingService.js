@@ -318,7 +318,13 @@ async function stripInvalidAttributeValues(categoryId, attributes) {
     if (!def) return true; // no tenemos su definición — no tocar, que ML valide como siempre
     const value = String(a.value_name ?? "").trim();
     if (!value) return false;
-    if (def.values?.length) return def.values.some(v => v.name === value);
+    // OJO: "values" viene poblado en MUCHOS atributos que igual aceptan texto libre (ej. BRAND
+    // es value_type "string" con values=[marcas comunes] pero ML acepta cualquier texto — su
+    // propio hint dice "Escribí la marca real... o 'Genérica' si no tiene", y "Genérica" nunca
+    // está en esa lista). Confirmado contra la API real (categoría MLA1645): el único value_type
+    // donde el valor tiene que matchear EXACTO una opción de la lista es "list" — eso es lo que
+    // realmente es un enum cerrado, no "values" no vacío.
+    if (def.value_type === "list") return def.values?.some(v => v.name === value) ?? false;
     if (def.value_type === "number_unit") return /^\d/.test(value);
     return true;
   });
