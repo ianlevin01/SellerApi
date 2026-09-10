@@ -345,16 +345,16 @@ export async function getMlSellerHistory(sellerId) {
   return mlWalletService.getHistory(sellerId);
 }
 
-// Confirmación/asignación manual del producto real de un ítem de ML que no está publicado
-// desde Ventaz — sea porque no había ninguna sugerencia, o porque el sistema sugirió un
-// producto por título (family_name, ver mlWebhookController.resolveUnmatchedItem) y un admin
-// lo confirma acá. En ambos casos, recién acá se calcula y suma la deuda de ese ítem — hasta
-// este momento quedó en $0 a propósito, nunca se cobra sola una publicación externa a Ventaz.
+// Confirmación/asignación manual del producto real de un ítem de ML — sea porque no está
+// publicado desde Ventaz (no había ninguna sugerencia, o el sistema sugirió uno por título vía
+// family_name y un admin lo confirma/corrige acá), o para corregir una asignación ya hecha
+// antes (a mano, o incluso nativa de Ventaz) — ver adminRepository.assignMlOrderItemProduct
+// para cómo se decide si corresponde ajustar la deuda o no en cada caso.
 export async function assignMlOrderItemProduct(itemId, productId) {
   if (!productId) throw { status: 400, message: "Falta el producto a asignar" };
 
-  const item = await repo.getUnassignedMlOrderItem(itemId);
-  if (!item) throw { status: 404, message: "Ítem no encontrado o ya tiene un producto asignado" };
+  const item = await repo.getMlOrderItemForAssign(itemId);
+  if (!item) throw { status: 404, message: "Ítem no encontrado" };
 
   const product = await repo.getProductForAssign(productId);
   if (!product) throw { status: 404, message: "Producto no encontrado" };
@@ -367,7 +367,11 @@ export async function assignMlOrderItemProduct(itemId, productId) {
     productId, productName: product.name, unitCost, sellerId: item.seller_id,
   });
   if (!result) throw { status: 404, message: "No se pudo asignar — el ítem puede haber cambiado" };
-  return { message: "Producto asignado y deuda generada" };
+  return {
+    message: result.wasNative
+      ? "Producto reasignado — no se modificó la deuda ya generada para esta venta"
+      : "Producto asignado y deuda actualizada",
+  };
 }
 
 export async function updateProductDimensions(productId, body) {

@@ -326,12 +326,12 @@ export async function getProductForAssign(productId) {
   return rows[0] || null;
 }
 
-// Ítem puntual de un pedido de ML todavía sin confirmar — sin producto (nunca se pudo sugerir
-// nada) o con un producto sugerido por título (ml_match_method = 'family_name', sin confirmar
-// todavía) — junto con lo necesario para recalcular su costo (plan del vendedor, costo_usd del
-// producto elegido) al asignarlo/confirmarlo a mano. Una vez asignado (ml_match_method =
-// 'manual') ya no aparece acá, para no volver a cobrarlo.
-export async function getUnassignedMlOrderItem(itemId) {
+// Ítem puntual de un pedido de ML, para (re)asignarle el producto real a mano — junto con lo
+// necesario para recalcular su costo (plan del vendedor, costo_usd del producto elegido). A
+// diferencia de antes, esto ya no se restringe a ítems sin confirmar todavía: también se puede
+// volver a llamar sobre uno ya asignado (a mano o nativo) para cambiarlo — ver
+// assignMlOrderItemProduct, que decide ahí cómo tratar cada caso.
+export async function getMlOrderItemForAssign(itemId) {
   const { rows } = await pool.query(
     `SELECT woi.id, woi.web_order_id, woi.quantity, woi.ml_item_id,
             wo.seller_id, s.plan_id
@@ -339,52 +339,81 @@ export async function getUnassignedMlOrderItem(itemId) {
      JOIN web_orders wo ON wo.id = woi.web_order_id
      JOIN sellers s ON s.id = wo.seller_id
      WHERE woi.id = $1
-       AND (woi.ml_match_method IS NULL OR woi.ml_match_method = 'family_name')
        AND wo.channel = 'mercadolibre'`,
     [itemId]
   );
   return rows[0] || null;
 }
 
-// Asigna a mano el producto real de un ítem que llegó sin poder resolverse solo — actualiza el
-// ítem, suma el costo recién calculado a la deuda del pedido, y recuerda la publicación en
-// ml_listings para que la próxima venta de ese mismo ml_item_id resuelva directo.
+// Asigna o reasigna a mano el producto real de un ítem de ML — actualiza el ítem y recuerda la
+// publicación en ml_listings para que la próxima venta de ese mismo ml_item_id resuelva directo
+// (si ya estaba recordada de una asignación anterior, se corrige para apuntar al nuevo producto).
+//
+// El manejo de la deuda depende de si el ítem era "nativo" (product_id ya cargado Y
+// ml_match_method NULL — se resolvió solo vía ml_listings al procesar la venta, ver
+// mlWebhookController.processOrder): para esos, el costo de ESTE ítem quedó sumado directo al
+// total del pedido en ese momento, sin guardarse por separado en unit_cost (el webhook nunca lo
+// escribe ahí) — no hay forma confiable de reconstruir cuánto se cobró originalmente sin volver
+// a calcularlo con la cotización de HOY en vez de la del día real de la venta, así que acá NO se
+// toca la deuda ya generada — reasignar un nativo solo corrige a qué producto apunta de acá en
+// más. Para todo lo demás (sin asignar, sugerido, o ya asignado a mano antes) si HABÍA un
+// unit_cost guardado de una asignación previa, se resta esa parte antes de sumar la nueva — así
+// una reasignación ajusta la deuda por la diferencia real, en vez de sumarse encima de la vieja.
 export async function assignMlOrderItemProduct(itemId, { productId, productName, unitCost, sellerId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows: itemRows } = await client.query(
-      `UPDATE web_order_items
-       SET product_id = $1, name = $2, unit_cost = $3, ml_match_method = 'manual'
-       WHERE id = $4
-       RETURNING web_order_id, quantity, ml_item_id`,
-      [productId, productName, unitCost, itemId]
+    const { rows: currentRows } = await client.query(
+      `SELECT web_order_id, quantity, ml_item_id, product_id, ml_match_method, unit_cost
+       FROM web_order_items WHERE id = $1 FOR UPDATE`,
+      [itemId]
     );
-    const item = itemRows[0];
-    if (!item) { await client.query("ROLLBACK"); return null; }
+    const current = currentRows[0];
+    if (!current) { await client.query("ROLLBACK"); return null; }
 
-    const costAdded = unitCost * item.quantity;
-    const { rows: orderRows } = await client.query(
-      `UPDATE web_orders SET ml_cost_amount = ml_cost_amount + $1 WHERE id = $2 RETURNING id`,
-      [costAdded, item.web_order_id]
-    );
+    const wasNative = current.product_id != null && current.ml_match_method == null;
 
-    if (item.ml_item_id) {
+    if (wasNative) {
+      await client.query(
+        `UPDATE web_order_items SET product_id = $1, name = $2 WHERE id = $3`,
+        [productId, productName, itemId]
+      );
+    } else {
+      const oldContribution = Number(current.unit_cost || 0) * current.quantity;
+      const newContribution = unitCost * current.quantity;
+      await client.query(
+        `UPDATE web_order_items
+         SET product_id = $1, name = $2, unit_cost = $3, ml_match_method = 'manual'
+         WHERE id = $4`,
+        [productId, productName, unitCost, itemId]
+      );
+      await client.query(
+        `UPDATE web_orders SET ml_cost_amount = ml_cost_amount + $1 WHERE id = $2`,
+        [newContribution - oldContribution, current.web_order_id]
+      );
+    }
+
+    if (current.ml_item_id) {
       const { rows: existing } = await client.query(
         `SELECT 1 FROM ml_listings WHERE ml_item_id = $1`,
-        [item.ml_item_id]
+        [current.ml_item_id]
       );
-      if (!existing[0]) {
+      if (existing[0]) {
+        await client.query(
+          `UPDATE ml_listings SET product_id = $1 WHERE ml_item_id = $2`,
+          [productId, current.ml_item_id]
+        );
+      } else {
         await client.query(
           `INSERT INTO ml_listings (seller_id, product_id, ml_item_id, status)
            VALUES ($1, $2, $3, 'active')`,
-          [sellerId, productId, item.ml_item_id]
+          [sellerId, productId, current.ml_item_id]
         );
       }
     }
 
     await client.query("COMMIT");
-    return orderRows[0];
+    return { id: current.web_order_id, wasNative };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
