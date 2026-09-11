@@ -367,11 +367,14 @@ export async function assignMlOrderItemProduct(itemId, productId) {
     productId, productName: product.name, unitCost, sellerId: item.seller_id,
   });
   if (!result) throw { status: 404, message: "No se pudo asignar — el ítem puede haber cambiado" };
-  return {
-    message: result.wasNative
-      ? "Producto reasignado — no se modificó la deuda ya generada para esta venta"
-      : "Producto asignado y deuda actualizada",
-  };
+
+  const parts = [result.wasNative
+    ? "Producto reasignado — no se modificó la deuda ya generada para esta venta"
+    : "Producto asignado y deuda actualizada"];
+  if (result.syncedCount > 0) {
+    parts.push(`Se actualizaron ${result.syncedCount} venta${result.syncedCount === 1 ? "" : "s"} más de la misma publicación que todavía no estaban confirmadas.`);
+  }
+  return { message: parts.join(" ") };
 }
 
 export async function updateProductDimensions(productId, body) {

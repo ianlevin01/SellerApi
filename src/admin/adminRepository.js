@@ -393,6 +393,7 @@ export async function assignMlOrderItemProduct(itemId, { productId, productName,
       );
     }
 
+    let syncedCount = 0;
     if (current.ml_item_id) {
       const { rows: existing } = await client.query(
         `SELECT 1 FROM ml_listings WHERE ml_item_id = $1`,
@@ -410,10 +411,43 @@ export async function assignMlOrderItemProduct(itemId, { productId, productName,
           [sellerId, productId, current.ml_item_id]
         );
       }
+
+      // Otras ventas de esta MISMA publicación (mismo ml_item_id) que todavía estén sin
+      // confirmar (nunca se pudo sugerir nada, o quedó en una sugerencia por título sin
+      // revisar) se resuelven solas con el producto recién confirmado, en vez de quedar cada
+      // una esperando que un admin las mire una por una — confirmado con el caso real de los
+      // pedidos #37/#38 (mismo ml_item_id, el #37 seguía "sugerido sin confirmar" con OTRO
+      // producto después de asignar el #38 a mano). Una ya confirmada a mano antes
+      // (ml_match_method = 'manual') no se toca acá — eso fue una decisión explícita previa,
+      // sobre OTRO ítem, y no se pisa solo porque este ml_item_id se volvió a confirmar.
+      const { rows: siblings } = await client.query(
+        `SELECT woi.id, woi.web_order_id, woi.quantity, woi.unit_cost
+         FROM web_order_items woi
+         JOIN web_orders wo ON wo.id = woi.web_order_id
+         WHERE woi.ml_item_id = $1 AND woi.id != $2 AND wo.seller_id = $3
+           AND (woi.ml_match_method IS NULL OR woi.ml_match_method = 'family_name')
+         FOR UPDATE OF woi`,
+        [current.ml_item_id, itemId, sellerId]
+      );
+      for (const sib of siblings) {
+        const sibOldContribution = Number(sib.unit_cost || 0) * sib.quantity;
+        const sibNewContribution = unitCost * sib.quantity;
+        await client.query(
+          `UPDATE web_order_items
+           SET product_id = $1, name = $2, unit_cost = $3, ml_match_method = 'manual'
+           WHERE id = $4`,
+          [productId, productName, unitCost, sib.id]
+        );
+        await client.query(
+          `UPDATE web_orders SET ml_cost_amount = ml_cost_amount + $1 WHERE id = $2`,
+          [sibNewContribution - sibOldContribution, sib.web_order_id]
+        );
+      }
+      syncedCount = siblings.length;
     }
 
     await client.query("COMMIT");
-    return { id: current.web_order_id, wasNative };
+    return { id: current.web_order_id, wasNative, syncedCount };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
