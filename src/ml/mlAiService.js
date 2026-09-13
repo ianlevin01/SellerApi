@@ -18,7 +18,7 @@ function getClient() {
 // producto + marca + modelo + 2 o 3 especificaciones que realmente lo diferencian (no todas
 // las specs existentes, eso lo vuelve ilegible y desperdicia espacio). Tiene que leerse como
 // el nombre exacto de un producto en un catálogo, no como un anuncio.
-export async function suggestTitle(productName, categoryName) {
+export async function suggestTitle(productName, categoryName, adminInfo = "") {
   const ai  = getClient();
   const res = await ai.chat.completions.create({
     model:       "gpt-4o-mini",
@@ -47,7 +47,7 @@ Respondé SOLO el título, sin comillas ni explicación.`,
       },
       {
         role:    "user",
-        content: `Producto: "${productName}"${categoryName ? `\nCategoría: "${categoryName}"` : ""}`,
+        content: `Producto: "${productName}"${categoryName ? `\nCategoría: "${categoryName}"` : ""}${adminInfo ? `\nInformación confirmada por el equipo de Ventaz sobre este producto (dato real, priorizalo por sobre suposiciones): "${adminInfo}"` : ""}`,
       },
     ],
   });
@@ -72,7 +72,7 @@ function buildUserContent(text, imageUrls) {
 // el producto. Tiene que ser informativa pero comercial — ni un anuncio con frases vacías
 // ("¡no te lo podés perder!") ni una ficha técnica fría e ilegible. Cada frase tiene que
 // aportar algo concreto para decidir la compra; si no aporta, sobra.
-export async function suggestDescription(productName, existingDescription, imageUrls = []) {
+export async function suggestDescription(productName, existingDescription, imageUrls = [], adminInfo = "") {
   const ai  = getClient();
   const res = await ai.chat.completions.create({
     model:       "gpt-4o-mini",
@@ -90,7 +90,7 @@ Expandí y mejorá la descripción del vendedor con esta estructura (adaptala, n
 4. Qué incluye la compra (accesorios, manual, cable, etc., si corresponde).
 5. Cualquier dato que evite una pregunta antes de comprar: compatibilidad, instalación, forma de uso, garantía, condiciones relevantes.
 
-Si te paso fotos del producto, mirá lo que se ve en ellas (color, materiales, forma, accesorios incluidos, etc.) y usalo como fuente además del texto — no inventes nada que no esté mencionado ni sea visible en las fotos. Nunca contradigas datos que ya dio el vendedor.
+Si te paso fotos del producto, mirá lo que se ve en ellas (color, materiales, forma, accesorios incluidos, etc.) y usalo como fuente además del texto — no inventes nada que no esté mencionado ni sea visible en las fotos. Si te paso información confirmada por el equipo de Ventaz sobre el producto, es un dato real — priorizala por sobre suposiciones y nunca la contradigas. Nunca contradigas datos que ya dio el vendedor.
 
 Prohibido: frases publicitarias vacías ("¡no te lo podés perder!", "¡la mejor oportunidad!", "¡comprá ya!"), exageraciones, y cualquier dato inventado que no puedas respaldar con el texto del vendedor o las fotos.
 
@@ -100,7 +100,7 @@ Devolvé SOLO el texto de la descripción, sin explicaciones ni markdown.`,
       {
         role:    "user",
         content: buildUserContent(
-          `Producto: "${productName}"\nDescripción del vendedor: "${existingDescription || "(sin descripción, generá una genérica acorde al nombre y, si hay fotos, a lo que se ve en ellas)"}"`,
+          `Producto: "${productName}"\nDescripción del vendedor: "${existingDescription || "(sin descripción, generá una genérica acorde al nombre y, si hay fotos, a lo que se ve en ellas)"}"${adminInfo ? `\nInformación confirmada por el equipo de Ventaz: "${adminInfo}"` : ""}`,
           imageUrls,
         ),
       },
@@ -114,7 +114,7 @@ Devolvé SOLO el texto de la descripción, sin explicaciones ni markdown.`,
 // nuevo (rompería la publicación). Si no tiene lista, propone texto libre corto.
 // Con fotos del producto, el modelo puede inferir color/material/forma en vez de adivinar
 // casi al azar a partir del título — esto es lo que evita respuestas erráticas.
-export async function suggestAttributeValues(productName, existingDescription, categoryName, attrDefs, imageUrls = []) {
+export async function suggestAttributeValues(productName, existingDescription, categoryName, attrDefs, imageUrls = [], adminInfo = "") {
   if (!attrDefs.length) return {};
   const ai = getClient();
 
@@ -136,7 +136,7 @@ Te doy un producto y una lista de atributos de su categoría todavía sin comple
 
 Completar bien estos datos importa: Mercado Libre los usa como filtros de búsqueda, así que un atributo bien cargado ayuda a que el producto aparezca en más búsquedas relevantes — no son campos decorativos.
 
-Regla más importante: NUNCA inventes un dato que no podés respaldar. Si te paso fotos del producto, priorizá lo que se ve en ellas (color, material, forma, cantidad de piezas, etc.) por sobre suposiciones genéricas del título. Un dato falso hace que el producto aparezca en búsquedas equivocadas y genera devoluciones y reclamos — es preferible dejar el atributo sin completar.
+Regla más importante: NUNCA inventes un dato que no podés respaldar. Si te paso fotos del producto, priorizá lo que se ve en ellas (color, material, forma, cantidad de piezas, etc.) por sobre suposiciones genéricas del título. Si te paso información confirmada por el equipo de Ventaz sobre el producto, es un dato real — priorizala por sobre cualquier suposición. Un dato falso hace que el producto aparezca en búsquedas equivocadas y genera devoluciones y reclamos — es preferible dejar el atributo sin completar.
 
 Si el atributo tiene "opciones válidas", tenés que responder EXACTAMENTE uno de esos textos, tal cual está escrito — nunca inventes uno nuevo. Si entre esas opciones está "No aplica" y el atributo genuinamente no corresponde a este producto (no porque no sepas el dato), elegí esa. No uses "No aplica" como comodín para no pensar el valor real.
 Si el atributo es "Marca" y el producto no tiene una marca real conocida, respondé "Genérica" en vez de omitirlo.
@@ -147,7 +147,7 @@ Respondé SOLO JSON: { "valores": { "<id_del_atributo>": "<valor>", ... } }`,
       {
         role:    "user",
         content: buildUserContent(
-          `Producto: "${productName}"\nDescripción: "${existingDescription || "(sin descripción)"}"\nCategoría: "${categoryName || "(sin especificar)"}"\n\nAtributos a completar:\n${attrList}`,
+          `Producto: "${productName}"\nDescripción: "${existingDescription || "(sin descripción)"}"\nCategoría: "${categoryName || "(sin especificar)"}"${adminInfo ? `\nInformación confirmada por el equipo de Ventaz: "${adminInfo}"` : ""}\n\nAtributos a completar:\n${attrList}`,
           imageUrls,
         ),
       },

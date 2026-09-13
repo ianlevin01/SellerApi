@@ -8,6 +8,7 @@ import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getValidToken } from "../ml/mlTokenService.js";
 import * as mlSvc from "../ml/mlService.js";
 import { signKeys } from "../utils/s3Client.js";
+import * as productAiService from "../products/productAiService.js";
 
 export async function getDashboard() {
   const [stats, recentOrders, recentSellers] = await Promise.all([
@@ -99,14 +100,40 @@ export async function markPayoutTransferred(id) {
   return payout;
 }
 
+// Firma la primera imagen de cada producto (una sola vez por key única, mismo patrón que ya
+// usa getMlSales) — ayuda a distinguir productos con nombres parecidos, sobre todo en el
+// buscador de la ficha de producto (ver ProductInfo.jsx en AdminPanel).
 export async function getProducts() {
-  return repo.getAllProducts();
+  const rows = await repo.getAllProducts();
+  const uniqueKeys = [...new Set(rows.map(r => r.image_key).filter(Boolean))];
+  const signedUrls = await signKeys(uniqueKeys);
+  const urlByKey    = new Map(uniqueKeys.map((k, idx) => [k, signedUrls[idx]]));
+  for (const row of rows) {
+    row.imageUrl = row.image_key ? (urlByKey.get(row.image_key) || null) : null;
+    delete row.image_key;
+  }
+  return rows;
 }
 
 export async function updateProductCost(productId, cost) {
   if (!cost || Number(cost) <= 0) throw { status: 400, message: "Costo inválido" };
   await repo.updateProductCost(productId, Number(cost));
   return { message: "Costo actualizado" };
+}
+
+// Pura transformación de IA, no toca la base — separado de updateProductInfo a propósito, para
+// que el admin pueda generar, corregir a mano lo que la IA entendió mal, y recién ahí guardar.
+export async function generateProductInfo(productName, rawInfo) {
+  if (!productName) throw { status: 400, message: "Falta el nombre del producto" };
+  if (!rawInfo || !rawInfo.trim()) throw { status: 400, message: "Falta el texto a procesar" };
+  const info = await productAiService.rewriteAdminProductInfo(productName, rawInfo.trim());
+  return { info };
+}
+
+export async function updateProductInfo(productId, { rawInfo, info }) {
+  if (!info || !info.trim()) throw { status: 400, message: "Falta la información a guardar" };
+  await repo.updateProductInfo(productId, { rawInfo: rawInfo || null, info: info.trim() });
+  return { message: "Información del producto actualizada" };
 }
 
 export async function getPageAnalytics(pageId, from, to) {

@@ -147,3 +147,34 @@ Devolvé SOLO el HTML, sin explicaciones, sin markdown, sin bloque de código.`,
 
   return res.choices[0].message.content.trim();
 }
+
+// ── Reescribir notas sueltas de un admin sobre un producto ────────────────────
+// A diferencia de generateProductDescription (el vendedor describe, la IA embellece para
+// vender), esto lo carga el equipo de Ventaz — texto desordenado (medidas, color, material,
+// características) que se reescribe prolijo antes de guardarse. Se usa después como contexto
+// real para las sugerencias de IA del publicador de ML (ver mlAiService.js) y se le muestra
+// directo al vendedor, así que acá la regla es más estricta todavía: cero invención.
+export async function rewriteAdminProductInfo(productName, rawInfo) {
+  const ai  = getClient();
+  const res = await ai.chat.completions.create({
+    model:       "gpt-4o-mini",
+    max_tokens:  600,
+    temperature: 0.4,
+    messages: [
+      {
+        role:    "system",
+        content: `Sos un redactor técnico para una plataforma de e-commerce argentina.
+Tu tarea es reescribir notas sueltas y desordenadas que un admin cargó sobre un producto (medidas, color, material, otras características) en un texto claro y bien organizado.
+REGLA PRINCIPAL: no inventes ningún dato que no esté en el texto original. Solo podés reorganizar, corregir redacción/ortografía y estructurar por característica (ej. "Medidas: ...", "Color: ...") cuando el texto lo permita.
+Formato: texto plano, sin HTML ni markdown — párrafos cortos o líneas con guiones si ayuda a organizar.
+Devolvé SOLO el texto reescrito, sin explicaciones.`,
+      },
+      {
+        role:    "user",
+        content: `Producto: "${productName}"\n\nNotas del admin (única fuente — no agregues nada que no esté acá):\n"${rawInfo}"`,
+      },
+    ],
+  });
+
+  return res.choices[0].message.content.trim();
+}

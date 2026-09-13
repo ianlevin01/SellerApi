@@ -372,12 +372,12 @@ export async function getPriceFloor(req, res) {
 
 // ── Sugerencias con IA para el wizard de publicar ────────────────────────────
 
-// POST /seller/ml/suggest/title  { productName, categoryName }
+// POST /seller/ml/suggest/title  { productName, categoryName, adminInfo }
 export async function suggestTitle(req, res) {
   try {
-    const { productName, categoryName } = req.body;
+    const { productName, categoryName, adminInfo } = req.body;
     if (!productName) return res.status(400).json({ message: "Falta productName" });
-    const title = await aiSvc.suggestTitle(productName, categoryName);
+    const title = await aiSvc.suggestTitle(productName, categoryName, adminInfo);
     return res.json({ title });
   } catch (err) {
     console.error("[ml] suggestTitle:", err.message);
@@ -385,12 +385,12 @@ export async function suggestTitle(req, res) {
   }
 }
 
-// POST /seller/ml/suggest/description  { productName, description, imageUrls }
+// POST /seller/ml/suggest/description  { productName, description, imageUrls, adminInfo }
 export async function suggestDescription(req, res) {
   try {
-    const { productName, description, imageUrls } = req.body;
+    const { productName, description, imageUrls, adminInfo } = req.body;
     if (!productName) return res.status(400).json({ message: "Falta productName" });
-    const description_ = await aiSvc.suggestDescription(productName, description, imageUrls);
+    const description_ = await aiSvc.suggestDescription(productName, description, imageUrls, adminInfo);
     return res.json({ description: description_ });
   } catch (err) {
     console.error("[ml] suggestDescription:", err.message);
@@ -398,12 +398,12 @@ export async function suggestDescription(req, res) {
   }
 }
 
-// POST /seller/ml/suggest/attributes  { productName, description, categoryName, attrDefs, imageUrls }
+// POST /seller/ml/suggest/attributes  { productName, description, categoryName, attrDefs, imageUrls, adminInfo }
 export async function suggestAttributes(req, res) {
   try {
-    const { productName, description, categoryName, attrDefs, imageUrls } = req.body;
+    const { productName, description, categoryName, attrDefs, imageUrls, adminInfo } = req.body;
     if (!productName || !Array.isArray(attrDefs)) return res.status(400).json({ message: "Faltan datos" });
-    const values = await aiSvc.suggestAttributeValues(productName, description, categoryName, attrDefs, imageUrls);
+    const values = await aiSvc.suggestAttributeValues(productName, description, categoryName, attrDefs, imageUrls, adminInfo);
     return res.json({ values });
   } catch (err) {
     console.error("[ml] suggestAttributes:", err.message);
@@ -422,11 +422,11 @@ export async function suggestAttributes(req, res) {
 // default de fondo blanco de estudio (ver aiSvc.generateProductImage).
 export async function generatePicture(req, res) {
   try {
-    const { productName, description, imageUrls, userPrompt } = req.body;
+    const { productName, description, imageUrls, userPrompt, adminInfo } = req.body;
     if (!productName) return res.status(400).json({ message: "Falta productName" });
     const visualDescription = await aiSvc.describeProductForImageGen(productName, imageUrls)
       .catch(err => { console.error("[ml] describeProductForImageGen:", err.message); return ""; });
-    const finalDescription = [visualDescription, description].filter(Boolean).join(". ");
+    const finalDescription = [visualDescription, description, adminInfo].filter(Boolean).join(". ");
     const buffer = await aiSvc.generateProductImage(productName, finalDescription, userPrompt?.trim() || null);
     const result = await listingSvc.uploadPictureForSeller(req.seller.id, {
       buffer, originalname: `ia-${Date.now()}.png`, mimetype: "image/png",

@@ -695,6 +695,8 @@ export async function getAllProducts() {
            c.name AS category_name,
            p.costo_usd AS cost_usd,
            p.weight_grams, p.volume_cm3, p.dims_reviewed,
+           p.admin_info_raw, p.admin_info,
+           (SELECT pi.key FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.created_at LIMIT 1) AS image_key,
            COALESCE((SELECT s.quantity FROM stock s WHERE s.product_id = p.id LIMIT 1), 0) AS stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
@@ -714,6 +716,17 @@ export async function updateProductDimensions(productId, { weight_grams, volume_
   if (!sets.length) return;
   params.push(productId);
   await pool.query(`UPDATE products SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+}
+
+// admin_info_raw es lo que el admin pegó tal cual (para poder reeditar/regenerar después sin
+// reconstruirlo desde el texto ya prolijo); admin_info es lo que realmente se le muestra al
+// vendedor y se manda como contexto a las sugerencias de IA del publicador — ver
+// productsRepository.js, que a propósito solo trae esta segunda columna hacia el lado vendedor.
+export async function updateProductInfo(productId, { rawInfo, info }) {
+  await pool.query(
+    `UPDATE products SET admin_info_raw = $1, admin_info = $2 WHERE id = $3`,
+    [rawInfo ?? null, info ?? null, productId]
+  );
 }
 
 export async function updateProductCost(productId, cost) {
