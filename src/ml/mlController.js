@@ -456,6 +456,7 @@ export async function publishProduct(req, res) {
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
       ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+      ...(err.accountDataIncomplete ? { accountDataIncomplete: true, kycUrl: err.kycUrl } : {}),
     });
   }
 }
@@ -507,6 +508,7 @@ export async function addVariants(req, res) {
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
       ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+      ...(err.accountDataIncomplete ? { accountDataIncomplete: true, kycUrl: err.kycUrl } : {}),
     });
   }
 }
@@ -560,6 +562,7 @@ export async function publishCombo(req, res) {
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
       ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+      ...(err.accountDataIncomplete ? { accountDataIncomplete: true, kycUrl: err.kycUrl } : {}),
     });
   }
 }

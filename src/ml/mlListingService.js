@@ -145,6 +145,10 @@ const WAREHOUSE_CITY_NAME = process.env.ML_WAREHOUSE_CITY || "Balvanera";
 // Pantalla real de Mercado Libre para editar los domicilios de despacho del vendedor (no un
 // artículo de ayuda).
 const ML_ADDRESS_HELP_URL = "https://vendedores.mercadolibre.com.ar/addresses/seller/hub/actionable";
+// Pantalla de Mercado Libre para completar los datos de cuenta (identidad/KYC) pendientes que
+// bloquean la publicación — "seller.unable_to_list" persistente (tras el reintento de abajo)
+// resultó ser, en la práctica, justamente esto: datos de la cuenta sin completar del lado de ML.
+const ML_KYC_URL = "https://www.mercadolibre.com.ar/kyc?initiative=supply-communications&congrats=true&landing=true";
 
 // Mercado Libre manda "XXXXXXX" (o similar) en vez del valor real para los campos de ubicación
 // exacta que le enmascara a nuestra app — los tratamos como ausentes en vez de mostrarlos tal
@@ -447,8 +451,10 @@ async function createMlItem(token, payload, { create = svc.createItem } = {}) {
         const tagsApplied = await ensureInstallmentTags(token, item.mlItemId, payload.tags);
         return { ...item, shippingFreeUsed: !!payload.shippingFree, ...(tagsApplied ? {} : { installmentTagsApplied: false }) };
       } catch {
-        const e = new Error("Mercado Libre no permitió publicar en este momento. Puede deberse a una verificación de cuenta pendiente (teléfono, dirección o identidad) — revisá las notificaciones de tu cuenta de Mercado Libre. Si no ves nada pendiente, esperá un momento y volvé a intentar.");
+        const e = new Error("Tu cuenta de Mercado Libre tiene datos pendientes de completar (identidad, teléfono o dirección) — hasta que los completes, Mercado Libre no permite publicar. Completalos desde el botón de abajo y volvé a intentar.");
         e.status = 422;
+        e.accountDataIncomplete = true;
+        e.kycUrl = ML_KYC_URL;
         throw e;
       }
     }
