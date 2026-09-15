@@ -444,7 +444,11 @@ async function createMlItem(token, payload, { create = svc.createItem } = {}) {
     // chequeo quedó viejo/cacheado unos segundos: un vendedor real reintentó sin cambiar nada y
     // publicó bien al toque. Reintentamos una vez solos, con una pequeña espera, antes de
     // mostrarle cualquier error al vendedor.
-    if (err.mlError === "seller.unable_to_list") {
+    // OJO: confirmado en vivo que ML no es consistente en dónde manda este código — a veces
+    // llega en data.error (→ err.mlError), a veces en data.message (que solo queda en
+    // err.message, ya formateado como "ML API: seller.unable_to_list — ..."). Por eso se chequean
+    // las dos formas acá en vez de confiar solo en err.mlError.
+    if (err.mlError === "seller.unable_to_list" || err.message?.includes("seller.unable_to_list")) {
       await new Promise(r => setTimeout(r, 2500));
       try {
         const item = await create(token, payload);
