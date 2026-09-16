@@ -152,6 +152,20 @@ export async function searchProductsForListing(search) {
   return rows;
 }
 
+// Búsqueda de productos para el modal de "vincular publicación" — a diferencia de
+// searchProductsForListing (pensada para la calculadora, sin foto), acá el vendedor necesita
+// ver una miniatura para confirmar que está eligiendo el producto correcto.
+export async function searchProductsForLinking(search) {
+  const { rows } = await pool.query(
+    `SELECT p.id, p.name, p.code AS sku,
+            (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key
+     FROM products p WHERE p.active = true AND p.name ILIKE $1
+     ORDER BY p.name LIMIT 10`,
+    [`%${search}%`]
+  );
+  return rows;
+}
+
 export async function getComboProducts(comboId) {
   const { rows } = await pool.query(
     `SELECT cp.product_id, cp.quantity, p.name, p.description, p.costo_usd, p.weight_grams, p.volume_cm3,
@@ -361,6 +375,32 @@ export async function getListingByMlItemId(mlItemId) {
   return rows[0] || null;
 }
 
+// Para el modal de "vincular publicación" — de una tanda de ml_item_id traídos en vivo desde
+// ML, marca cuáles ya están registrados acá y con qué producto, en una sola consulta en vez de
+// una por ítem.
+export async function getListingsByItemIds(sellerId, mlItemIds) {
+  if (!mlItemIds.length) return [];
+  const { rows } = await pool.query(
+    `SELECT l.ml_item_id, l.product_id, l.ml_combo_id, p.name AS product_name
+     FROM ml_listings l
+     LEFT JOIN products p ON p.id = l.product_id
+     WHERE l.seller_id = $1 AND l.ml_item_id = ANY($2::text[])`,
+    [sellerId, mlItemIds]
+  );
+  return rows;
+}
+
+// Reasigna el producto vinculado a una publicación ya registrada — scoped por seller_id (a
+// diferencia de assignMlOrderItemProduct en adminRepository.js, esto lo dispara el propio
+// vendedor, así que el WHERE tiene que confirmar que la publicación es suya).
+export async function updateListingProduct(sellerId, mlItemId, productId) {
+  const { rows } = await pool.query(
+    `UPDATE ml_listings SET product_id = $1, updated_at = now() WHERE ml_item_id = $2 AND seller_id = $3 RETURNING *`,
+    [productId, mlItemId, sellerId]
+  );
+  return rows[0] || null;
+}
+
 export async function getListingsBySeller(sellerId) {
   const { rows } = await pool.query(
     `SELECT l.*, p.name AS product_name, p.code AS sku,
@@ -369,8 +409,8 @@ export async function getListingsBySeller(sellerId) {
               - COALESCE(p.stock_reserva, 0)) AS available_stock,
             -- Por ml_item_id, NO por product_id: si el mismo producto tiene más de una
             -- publicación, filtrar por product_id sumaba las ventas de TODAS esas publicaciones
-            -- en cada una de ellas (confirmado con datos reales: un producto con varias
-            -- publicaciones mostraba el total de todas en cada una, en vez del número real).
+            -- en cada una de ellas (confirmado con datos reales: un producto con 6 publicaciones
+            -- mostraba el total de las 6 en cada una, en vez del número real de cada una).
             COALESCE((
               SELECT SUM(woi.quantity) FROM web_order_items woi
               JOIN web_orders wo ON wo.id = woi.web_order_id

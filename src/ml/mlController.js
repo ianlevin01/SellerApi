@@ -175,6 +175,41 @@ export async function getListings(req, res) {
   }
 }
 
+// GET /seller/ml/listings/browse?offset=&limit= — publicaciones reales del vendedor en ML
+// (para "vincular publicación"), no lo que ya está registrado en ml_listings.
+export async function getBrowsableListings(req, res) {
+  try {
+    return res.json(await listingSvc.getBrowsableListings(req.seller.id));
+  } catch (err) {
+    console.error("[ml] getBrowsableListings:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// PATCH /seller/ml/listings/:mlItemId/link  { productId }
+export async function linkListing(req, res) {
+  try {
+    const { productId } = req.body;
+    if (!productId) return res.status(400).json({ message: "Falta el producto a vincular" });
+    const listing = await listingSvc.linkListingToProduct(req.seller.id, req.params.mlItemId, productId);
+    return res.json(listing);
+  } catch (err) {
+    console.error("[ml] linkListing:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// GET /seller/ml/products/search-for-linking?q=... — buscador con foto para el modal de
+// vincular (distinto de /products/search, que trae la forma de datos de la calculadora).
+export async function searchProductsForLinking(req, res) {
+  try {
+    return res.json(await listingSvc.searchProductsForLinkModal(req.query.q || ""));
+  } catch (err) {
+    console.error("[ml] searchProductsForLinking:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
 // GET /seller/ml/shipping-address-status — para el banner de aviso + el checklist de onboarding
 export async function getShippingAddressStatus(req, res) {
   try {
@@ -328,6 +363,17 @@ export async function getPictureStatus(req, res) {
     return res.json(await listingSvc.getPictureStatus(req.seller.id, req.params.mlItemId));
   } catch (err) {
     console.error("[ml] getPictureStatus:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// GET /seller/ml/listings/:mlItemId/live-preview — foto/título reales de la publicación en
+// Mercado Libre ahora mismo, para el modal de "cambiar producto asignado".
+export async function getLiveListingPreview(req, res) {
+  try {
+    return res.json(await listingSvc.getLiveListingPreview(req.seller.id, req.params.mlItemId));
+  } catch (err) {
+    console.error("[ml] getLiveListingPreview:", err.message);
     return res.status(err.status || 500).json({ message: err.message || "Error" });
   }
 }

@@ -631,6 +631,24 @@ export async function getListingPictures(sellerId, mlItemId) {
   return (item.pictures || []).map(p => ({ id: p.id, url: p.secure_url || p.url }));
 }
 
+// Vista previa EN VIVO de una publicación — a diferencia de getListingsBySeller (que trae la
+// foto del PRODUCTO DE VENTAZ actualmente vinculado), esto trae la foto/título reales que la
+// publicación tiene HOY en Mercado Libre. Se usa en el modal de "cambiar producto asignado"
+// para que el vendedor confirme que está tocando la publicación correcta antes de re-mapearla.
+export async function getLiveListingPreview(sellerId, mlItemId) {
+  const owned = await repo.getListingForVariants(mlItemId, sellerId);
+  if (!owned) { const e = new Error("Publicación no encontrada"); e.status = 404; throw e; }
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const item = await svc.getItem(token, mlItemId).catch(() => null);
+  if (!item) { const e = new Error("No se pudo encontrar esa publicación en Mercado Libre"); e.status = 404; throw e; }
+  return {
+    title: item.title || null,
+    thumbnail: item.thumbnail || item.pictures?.[0]?.secure_url || item.pictures?.[0]?.url || null,
+    status: item.status || null,
+  };
+}
+
 // Agrega variantes (ej. colores) a una publicación existente, formando (o sumándose a) una
 // familia de Mercado Libre. Cada variante es un ítem propio e independiente (modelo "User
 // Products" — el mismo que publishProduct ya usa por defecto vía family_name), nunca el array
@@ -1043,9 +1061,142 @@ export async function reactivateListingsAfterChargeSuccess(sellerId) {
 
 export async function getListings(sellerId) {
   const listings = await repo.getListingsBySeller(sellerId);
-  return Promise.all(listings.map(async l => ({
+  const withProductImages = await Promise.all(listings.map(async l => ({
     ...l,
     image_url: l.image_key ? await signKey(l.image_key) : null,
+  })));
+
+  // Foto real de la publicación en Mercado Libre (no la del producto de Ventaz vinculado) — se
+  // pide en vivo, sin cachear, a pedido explícito: más lento que cachear pero sin agregar
+  // columnas ni un mecanismo de refresco. Un batch fallido no tira abajo el resto de la lista.
+  const token = await getValidToken(sellerId);
+  if (!token) return withProductImages;
+
+  const itemIds = withProductImages.map(l => l.ml_item_id);
+  const batches = [];
+  for (let i = 0; i < itemIds.length; i += svc.ML_MULTIGET_BATCH_SIZE) {
+    batches.push(itemIds.slice(i, i + svc.ML_MULTIGET_BATCH_SIZE));
+  }
+  const rawItems = (await Promise.all(
+    batches.map(batch => svc.getItemsMultiget(token, batch).catch(() => []))
+  )).flat();
+  const thumbByItemId = new Map(rawItems.map(i =>
+    [i.id, i.thumbnail || i.pictures?.[0]?.secure_url || i.pictures?.[0]?.url || null]));
+
+  return withProductImages.map(l => ({ ...l, ml_thumbnail_url: thumbByItemId.get(l.ml_item_id) || null }));
+}
+
+// Publicaciones reales del vendedor en Mercado Libre (en vivo, no lo que ya tenemos en
+// ml_listings) — para el modal de "vincular publicación": alguien que publicó todo directo en
+// ML, sin pasar por Ventaz, no tiene ninguna fila acá y por eso necesita ver sus publicaciones
+// reales para poder elegir una. Se descartan las "closed" (no puede haber más ventas ahí, no
+// tiene sentido ofrecerlas como destino de vinculación) — confirmado en vivo que sin filtro de
+// status ML devuelve una mezcla real de active/paused/closed/under_review.
+// Trae TODAS las publicaciones del vendedor (no paginadas por el orden propio de ML) para poder
+// ordenar "sin vincular" primero — el motivo de ser de este modal es encontrar justamente esas,
+// y si se paginara por el orden de ML podían quedar enterradas varias páginas más allá. Se busca
+// todo de una sola vez (loop de searchSellerItemIds + multiget en lotes de
+// ML_MULTIGET_BATCH_SIZE) y se ordena/filtra acá — la búsqueda por texto la hace el frontend
+// sobre esta misma lista ya cargada, sin pedir de nuevo a ML por cada letra tipeada.
+export async function getBrowsableListings(sellerId) {
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
+
+  const allIds = [];
+  let total = Infinity;
+  while (allIds.length < total) {
+    const { ids, total: reportedTotal } = await svc.searchSellerItemIds(token, conn.ml_user_id, { offset: allIds.length });
+    total = reportedTotal;
+    if (!ids.length) break;
+    allIds.push(...ids);
+  }
+
+  const batches = [];
+  for (let i = 0; i < allIds.length; i += svc.ML_MULTIGET_BATCH_SIZE) {
+    batches.push(allIds.slice(i, i + svc.ML_MULTIGET_BATCH_SIZE));
+  }
+  const rawItems = (await Promise.all(batches.map(batch => svc.getItemsMultiget(token, batch)))).flat();
+  const items = rawItems.filter(i => i.status !== "closed");
+
+  const linkedRows = await repo.getListingsByItemIds(sellerId, items.map(i => i.id));
+  const linkedByItemId = new Map(linkedRows.map(r => [r.ml_item_id, r]));
+
+  const mapped = items.map(i => {
+    const linked = linkedByItemId.get(i.id);
+    return {
+      mlItemId: i.id,
+      title: i.title,
+      price: i.price,
+      thumbnail: i.thumbnail,
+      permalink: i.permalink,
+      status: i.status,
+      linkedProductId: linked?.product_id || null,
+      linkedProductName: linked?.product_name || null,
+      isCombo: !!linked?.ml_combo_id,
+    };
+  });
+  // Sin vincular primero (ni siquiera los combos, que van al final del todo — no se pueden
+  // vincular desde acá igual) — dentro de cada grupo se respeta el orden que ya traía ML.
+  mapped.sort((a, b) => {
+    const rank = item => item.isCombo ? 2 : item.linkedProductId ? 1 : 0;
+    return rank(a) - rank(b);
+  });
+
+  return { items: mapped, total: mapped.length };
+}
+
+// Vincula (o revincula) una publicación real de ML a un producto de Ventaz. El mlItemId llega
+// del cliente como texto plano — a diferencia del flujo de admin (mlItemId siempre viene de un
+// web_order_items ya cruzado con el seller), acá nada garantiza que pertenezca a esta cuenta,
+// así que se confirma contra ML antes de escribir nada.
+export async function linkListingToProduct(sellerId, mlItemId, productId) {
+  // Mismo único chequeo que usa el resto del módulo de ML para validar un producto — no hay
+  // ownership por vendedor en la tabla products en ningún lado de este módulo (es catálogo
+  // compartido), así que no se inventa uno acá.
+  const { rows: productRows } = await pool.query(`SELECT id, name FROM products WHERE id = $1 AND active = true`, [productId]);
+  const product = productRows[0];
+  if (!product) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
+
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
+
+  const item = await svc.getItem(token, mlItemId).catch(() => null);
+  if (!item) { const e = new Error("No se pudo encontrar esa publicación en Mercado Libre"); e.status = 404; throw e; }
+  if (String(item.seller_id) !== String(conn.ml_user_id)) {
+    const e = new Error("Esa publicación no pertenece a tu cuenta de Mercado Libre"); e.status = 403; throw e;
+  }
+
+  const existing = await repo.getListingByMlItemId(mlItemId);
+  if (existing?.ml_combo_id) {
+    const e = new Error("Esta publicación pertenece a un combo — no se puede vincular a un producto individual");
+    e.status = 400; throw e;
+  }
+
+  if (existing) {
+    return repo.updateListingProduct(sellerId, mlItemId, productId);
+  }
+  return repo.createListing(sellerId, {
+    productId, mlItemId,
+    permalink:    item.permalink,
+    status:       item.status === "active" ? "active" : "paused",
+    price:        item.price,
+    mlCategoryId: item.category_id,
+    mlAccountId:  conn.ml_user_id,
+    mlAccountNickname: conn.ml_nickname,
+  });
+}
+
+// Buscador de productos para el modal de vincular — a diferencia de searchProductsForCalculator
+// (pensado para cargar peso/costo en la calculadora), acá el vendedor necesita ver una
+// miniatura para confirmar que eligió el producto correcto.
+export async function searchProductsForLinkModal(search) {
+  if (!search || search.trim().length < 2) return [];
+  const rows = await repo.searchProductsForLinking(search.trim());
+  return Promise.all(rows.map(async p => ({
+    id: p.id, name: p.name, sku: p.sku,
+    imageUrl: p.image_key ? await signKey(p.image_key) : null,
   })));
 }
 

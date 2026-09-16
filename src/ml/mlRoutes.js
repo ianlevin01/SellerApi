@@ -27,6 +27,9 @@ router.post  ("/wallet/pay-debt",       ctrl.payDebt);
 router.post  ("/wallet/pay-blocked-debt", ctrl.payBlockedDebt);
 
 router.get   ("/listings",                      ctrl.getListings);
+router.get   ("/listings/browse",               ctrl.getBrowsableListings);
+router.patch ("/listings/:mlItemId/link",       ctrl.linkListing);
+router.get   ("/products/search-for-linking",   ctrl.searchProductsForLinking);
 router.get   ("/summary",                       ctrl.getSummary);
 router.get   ("/stats",                         ctrl.getStats);
 router.post  ("/stats/goal",                    ctrl.setStatsGoal);
@@ -48,6 +51,7 @@ router.get   ("/listings/:mlItemId/stats",       ctrl.getListingStats);
 router.get   ("/listings/:mlItemId/pictures",    ctrl.getListingPictures);
 router.post  ("/listings/:mlItemId/variants",    ctrl.addVariants);
 router.get   ("/listings/:mlItemId/picture-status", ctrl.getPictureStatus);
+router.get   ("/listings/:mlItemId/live-preview",   ctrl.getLiveListingPreview);
 router.post  ("/products/:productId/publish",   ctrl.publishProduct);
 router.patch ("/listings/:mlItemId",            ctrl.updateListingStatus);
 

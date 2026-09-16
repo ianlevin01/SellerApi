@@ -306,6 +306,30 @@ export async function getItem(token, itemId) {
   return apiGet(`/items/${itemId}`, token);
 }
 
+// Confirmado en vivo (13/9): ML rechaza con 400 explícito cualquier /items?ids=... de más de
+// 20 elementos ("The parameter 'ids' only allows 20 elements") — no es un número de la
+// documentación sin confirmar, es el límite real.
+export const ML_MULTIGET_BATCH_SIZE = 20;
+
+// IDs de las publicaciones del vendedor — sin filtrar por status a propósito: confirmado en
+// vivo que sin ese parámetro ML devuelve una mezcla real (active/paused/closed/under_review),
+// y una pausada es un destino de vinculación tan válido como una activa. Quien llama filtra
+// "closed" después de traer el detalle completo (ver getItemsMultiget), no acá.
+export async function searchSellerItemIds(token, mlUserId, { offset = 0, limit = ML_MULTIGET_BATCH_SIZE } = {}) {
+  const data = await apiGet(`/users/${mlUserId}/items/search?offset=${offset}&limit=${limit}`, token);
+  return { ids: data.results || [], total: data.paging?.total ?? 0 };
+}
+
+// Detalle completo de varias publicaciones en una sola llamada — hasta ML_MULTIGET_BATCH_SIZE
+// ids por vez (ver constante arriba). Cada resultado viene envuelto en {code, body} (confirmado
+// en vivo); se descartan acá los que no vinieron OK en vez de dejar que el caller se choque con
+// el wrapper.
+export async function getItemsMultiget(token, ids) {
+  if (!ids.length) return [];
+  const data = await apiGet(`/items?ids=${ids.join(",")}`, token);
+  return data.filter(r => r.code === 200).map(r => r.body);
+}
+
 // Domicilios cargados en la cuenta del vendedor — cada uno con "types" (puede incluir
 // "shipping", que ML documenta como "la dirección desde la que se despachan los envíos") y su
 // zip_code. Se usa para validar que el vendedor tenga cargado el depósito real de Ventaz.
