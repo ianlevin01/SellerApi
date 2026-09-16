@@ -367,10 +367,14 @@ export async function getListingsBySeller(sellerId) {
             (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
             GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
               - COALESCE(p.stock_reserva, 0)) AS available_stock,
+            -- Por ml_item_id, NO por product_id: si el mismo producto tiene más de una
+            -- publicación, filtrar por product_id sumaba las ventas de TODAS esas publicaciones
+            -- en cada una de ellas (confirmado con datos reales: un producto con varias
+            -- publicaciones mostraba el total de todas en cada una, en vez del número real).
             COALESCE((
               SELECT SUM(woi.quantity) FROM web_order_items woi
               JOIN web_orders wo ON wo.id = woi.web_order_id
-              WHERE woi.product_id = p.id AND wo.seller_id = l.seller_id AND wo.channel = 'mercadolibre'
+              WHERE woi.ml_item_id = l.ml_item_id AND wo.seller_id = l.seller_id AND wo.channel = 'mercadolibre'
             ), 0) AS units_sold,
             mc.name AS combo_name
      FROM ml_listings l
