@@ -78,6 +78,16 @@ export async function getUser(token) {
   return { id: String(data.id), nickname: data.nickname, siteId: data.site_id, tags: data.tags || [] };
 }
 
+// Motivo real por el que ML bloquea "seller.unable_to_list" — status.list.codes/status.sell.codes
+// documentan la razón específica (confirmado en vivo: "address_pending", "rejected_by_regulations",
+// entre otros posibles) — a diferencia del "cause" del error de escritura en sí, que a veces usa
+// otro vocabulario que no mapea 1 a 1 con estos códigos (confirmado en vivo: "restrictions_coliving").
+export async function getListBlockCodes(token) {
+  const data = await apiGet("/users/me", token).catch(() => null);
+  if (!data) return [];
+  return [...(data.status?.list?.codes || []), ...(data.status?.sell?.codes || [])];
+}
+
 // Crea un usuario de prueba de ML (comprador o vendedor, según cómo se use después) — no
 // hace falta un access_token específico, cualquier token válido de la app sirve. Solo se
 // puede usar una vez creado inmediatamente: ML no guarda un listado para volver a consultarlo.

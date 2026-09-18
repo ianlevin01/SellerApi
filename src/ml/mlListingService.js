@@ -455,10 +455,20 @@ async function createMlItem(token, payload, { create = svc.createItem } = {}) {
         const tagsApplied = await ensureInstallmentTags(token, item.mlItemId, payload.tags);
         return { ...item, shippingFreeUsed: !!payload.shippingFree, ...(tagsApplied ? {} : { installmentTagsApplied: false }) };
       } catch {
-        const e = new Error("Tu cuenta de Mercado Libre tiene datos pendientes de completar (identidad, teléfono o dirección) — hasta que los completes, Mercado Libre no permite publicar. Completalos desde el botón de abajo y volvé a intentar.");
+        // El motivo real varía por cuenta y cambia con el tiempo (confirmado en vivo: la MISMA
+        // cuenta pasó de "rejected_by_regulations" a "address_pending" en días distintos) — antes
+        // de asumir que es un tema de identidad/KYC, se chequea el motivo actual contra
+        // status.list/sell.codes para poder mandar al vendedor a la pantalla que de verdad
+        // corresponde. "kycUrl" queda con ese nombre por compatibilidad con el frontend ya
+        // desplegado, aunque acá pueda terminar siendo la de direcciones, no la de identidad.
+        const codes = await svc.getListBlockCodes(token).catch(() => []);
+        const isAddressIssue = codes.some(c => c.includes("address"));
+        const e = new Error(isAddressIssue
+          ? "Tu cuenta de Mercado Libre tiene pendiente configurar la dirección de despacho — hasta que la completes, Mercado Libre no permite publicar. Completala desde el botón de abajo y volvé a intentar."
+          : "Tu cuenta de Mercado Libre tiene datos pendientes de completar (identidad, teléfono o dirección) — hasta que los completes, Mercado Libre no permite publicar. Completalos desde el botón de abajo y volvé a intentar.");
         e.status = 422;
         e.accountDataIncomplete = true;
-        e.kycUrl = ML_KYC_URL;
+        e.kycUrl = isAddressIssue ? ML_ADDRESS_HELP_URL : ML_KYC_URL;
         throw e;
       }
     }
