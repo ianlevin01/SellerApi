@@ -134,7 +134,7 @@ async function buildPictureRef(token, key) {
 // Correo Argentino (MICORREO_ORIGIN_CP) en vez de duplicar el dato en otro lado. Si el depósito
 // cambia de dirección en el futuro, estas dos variables (o el .env) son lo único que hay que tocar.
 const WAREHOUSE_ZIP     = String(process.env.MICORREO_ORIGIN_CP || "1028").match(/\d{4}/)?.[0] || "1028";
-const WAREHOUSE_ADDRESS = process.env.ML_WAREHOUSE_ADDRESS || "Pasteur 280, CABA";
+const WAREHOUSE_ADDRESS = process.env.ML_WAREHOUSE_ADDRESS || "Teniente Juan Domingo Perón 2263";
 // Comparamos por CIUDAD, no por código postal, cuando el dato sale de un envío real (ver
 // getSenderAddressFromLastCorreoSale): confirmado contra un shipment real (26/8) que ML
 // devuelve el zip_code y la calle/altura de sender_address enmascarados como "XXXXXXX" para
@@ -464,7 +464,7 @@ async function createMlItem(token, payload, { create = svc.createItem } = {}) {
         const codes = await svc.getListBlockCodes(token).catch(() => []);
         const isAddressIssue = codes.some(c => c.includes("address"));
         const e = new Error(isAddressIssue
-          ? "Tu cuenta de Mercado Libre tiene pendiente configurar la dirección de despacho — hasta que la completes, Mercado Libre no permite publicar. Completala desde el botón de abajo y volvé a intentar."
+          ? `Tu cuenta de Mercado Libre tiene pendiente configurar la dirección de despacho y de devoluciones — hasta que las completes, Mercado Libre no permite publicar. Usá esta dirección en los dos campos: ${WAREHOUSE_ADDRESS}. Completalas desde el botón de abajo y volvé a intentar.`
           : "Tu cuenta de Mercado Libre tiene datos pendientes de completar (identidad, teléfono o dirección) — hasta que los completes, Mercado Libre no permite publicar. Completalos desde el botón de abajo y volvé a intentar.");
         e.status = 422;
         e.accountDataIncomplete = true;
