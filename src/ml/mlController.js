@@ -279,6 +279,32 @@ export async function suggestCategory(req, res) {
   }
 }
 
+// GET /seller/ml/catalog/search?q=... — busca en el catálogo compartido de Mercado Libre (para
+// "publicación de catálogo", no confundir con /products/search que busca en el catálogo PROPIO
+// de Ventaz). Resuelve category_id para cada resultado en una sola consulta extra (ver
+// getDomainCategoryMap) para que el frontend no tenga que pedirlo aparte al elegir uno.
+export async function searchCatalog(req, res) {
+  try {
+    const conn = await repo.getConnection(req.seller.id);
+    const siteId = conn?.site_id || "MLA";
+    const q = req.query.q || "";
+    const offset = Number(req.query.offset || 0);
+    const token = await getValidToken(req.seller.id);
+    const [{ items, total }, domainMap] = await Promise.all([
+      svc.searchCatalogProducts(token, siteId, q, { offset }),
+      svc.getDomainCategoryMap(siteId, q),
+    ]);
+    const enriched = items.map(r => ({
+      ...r,
+      categoryId: domainMap.find(d => d.domainId === r.domainId)?.categoryId || null,
+    }));
+    return res.json({ items: enriched, total, offset });
+  } catch (err) {
+    console.error("[ml] searchCatalog:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
 // GET /seller/ml/categories/:id/attributes
 export async function getCategoryAttributes(req, res) {
   try {
@@ -498,6 +524,28 @@ export async function publishProduct(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishProduct:", err.message);
+    return res.status(err.status || 500).json({
+      message: err.message || "Error",
+      ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
+      ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+      ...(err.accountDataIncomplete ? { accountDataIncomplete: true, kycUrl: err.kycUrl } : {}),
+    });
+  }
+}
+
+// POST /seller/ml/products/:productId/publish-catalog — "publicación de catálogo", misma
+// traducción de errores que publishProduct para que el frontend reuse AddressBlockNotice y el
+// banner de atributo faltante sin código nuevo.
+export async function publishCatalogProduct(req, res) {
+  try {
+    const card = await walletSvc.getCardStatus(req.seller.id);
+    if (!card.hasCard) {
+      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    }
+    const listing = await listingSvc.publishCatalogProduct(req.seller.id, req.params.productId, req.body);
+    return res.json(listing);
+  } catch (err) {
+    console.error("[ml] publishCatalogProduct:", err.message);
     return res.status(err.status || 500).json({
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),

@@ -596,6 +596,62 @@ export async function publishProduct(sellerId, productId, config) {
   return { ...listing, installmentTagsApplied: item.installmentTagsApplied };
 }
 
+// Publica un producto de Ventaz linkeado al catálogo compartido de Mercado Libre ("publicación
+// de catálogo") — la publicación compite por el buy box contra otros vendedores del mismo
+// catalog_product_id. A diferencia de publishProduct, NO se resuelven fotos/atributos/GTIN acá:
+// ML los completa solo a partir del catalog_product_id (confirmado empíricamente, ver
+// createCatalogItem en mlService.js) — mandarlos igual no está confirmado que sirva de nada, y
+// arriesga pisar los datos verificados del catálogo con algo peor.
+// config: { catalogProductId, categoryId (resuelto por el frontend vía resolveCategoryForCatalogProduct),
+//           price, shippingFree, listingTypeId, installmentTags }
+export async function publishCatalogProduct(sellerId, productId, config) {
+  const token = await getValidToken(sellerId);
+  if (!token) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+  const conn = await repo.getConnection(sellerId);
+
+  const product = await getProductForListing(productId);
+  if (!product) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
+  if (!config.catalogProductId) { const e = new Error("Falta el producto del catálogo de Mercado Libre"); e.status = 400; throw e; }
+  if (!config.categoryId) { const e = new Error("Falta la categoría de Mercado Libre"); e.status = 400; throw e; }
+  if (!config.price || config.price <= 0) { const e = new Error("Falta el precio para Mercado Libre"); e.status = 400; throw e; }
+  if (!product.available_stock || product.available_stock <= 0) {
+    const e = new Error("No se puede publicar en Mercado Libre un producto sin stock disponible");
+    e.status = 400;
+    throw e;
+  }
+
+  await checkMlListingLimit(sellerId);
+  await assertShippingAddressOk(sellerId);
+
+  const floor = await getPriceFloor(sellerId, productId);
+  if (config.price < floor) {
+    const e = new Error(`El precio no puede ser menor a $${Math.round(floor).toLocaleString("es-AR")} (costo total del producto)`);
+    e.status = 400;
+    throw e;
+  }
+
+  const item = await createMlItem(token, {
+    catalogProductId: config.catalogProductId,
+    categoryId:  config.categoryId,
+    price:       config.price,
+    stock:       product.available_stock,
+    dimensions:  estimateShippingDimensions(product.weight_grams, product.volume_cm3),
+    shippingFree: config.shippingFree,
+    listingTypeId: config.listingTypeId || "gold_special",
+    tags: config.installmentTags || [],
+    attributes: config.attributes || [],
+  }, { create: svc.createCatalogItem });
+
+  const listing = await repo.createListing(sellerId, {
+    productId, mlItemId: item.mlItemId, permalink: item.permalink,
+    status: "active", price: config.price, mlCategoryId: config.categoryId,
+    attributes: [], shippingFree: item.shippingFreeUsed,
+    mlAccountId: conn?.ml_user_id, mlAccountNickname: conn?.ml_nickname,
+    catalogProductId: config.catalogProductId,
+  });
+  return { ...listing, installmentTagsApplied: item.installmentTagsApplied };
+}
+
 // ── Variantes (modelo "User Products" de ML) ────────────────────
 
 // Elegibilidad para precio distinto por variante — depende de un tag en la cuenta de ML

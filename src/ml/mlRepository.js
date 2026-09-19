@@ -214,19 +214,19 @@ export async function updateComboProducts(comboId, products) {
 // después con qué cuenta se publicó cada cosa si el vendedor alternó entre varias.
 export async function createListing(sellerId, {
   productId, comboId, mlItemId, categoryId, status, permalink, price, mlCategoryId, attributes, shippingFree, mlAccountId, mlAccountNickname,
-  mlFamilyId, variantAttributeId, variantAttributeName, variantValue, isVariantRoot, publishedAsFamily,
+  mlFamilyId, variantAttributeId, variantAttributeName, variantValue, isVariantRoot, publishedAsFamily, catalogProductId,
 }) {
   const { rows } = await pool.query(
     `INSERT INTO ml_listings (
        seller_id, product_id, ml_combo_id, ml_item_id, category_id, status, permalink, price, ml_category_id, attributes, shipping_free, ml_account_id, ml_account_nickname,
-       ml_family_id, variant_attribute_id, variant_attribute_name, variant_value, is_variant_root, published_as_family
+       ml_family_id, variant_attribute_id, variant_attribute_name, variant_value, is_variant_root, published_as_family, catalog_product_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
      RETURNING *`,
     [sellerId, productId || null, comboId || null, mlItemId, categoryId || null, status || "active", permalink || null,
      price ?? null, mlCategoryId || null, JSON.stringify(attributes || []), !!shippingFree, mlAccountId || null, mlAccountNickname || null,
      mlFamilyId || null, variantAttributeId || null, variantAttributeName || null, variantValue || null,
-     !!isVariantRoot, publishedAsFamily ?? null]
+     !!isVariantRoot, publishedAsFamily ?? null, catalogProductId || null]
   );
   return rows[0];
 }

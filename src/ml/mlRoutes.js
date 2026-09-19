@@ -39,6 +39,7 @@ router.get   ("/variant-eligibility",           ctrl.getVariantEligibility);
 router.post  ("/variant-eligibility/recheck",   ctrl.recheckVariantEligibility);
 router.get   ("/categories/suggest",            ctrl.suggestCategory);
 router.get   ("/categories/:id/attributes",     ctrl.getCategoryAttributes);
+router.get   ("/catalog/search",                ctrl.searchCatalog);
 router.post  ("/pictures/upload", upload10mb.single("image"), ctrl.uploadPicture);
 router.post  ("/pictures/generate",             ctrl.generatePicture);
 router.get   ("/products/search",                 ctrl.searchProducts);
@@ -53,6 +54,7 @@ router.post  ("/listings/:mlItemId/variants",    ctrl.addVariants);
 router.get   ("/listings/:mlItemId/picture-status", ctrl.getPictureStatus);
 router.get   ("/listings/:mlItemId/live-preview",   ctrl.getLiveListingPreview);
 router.post  ("/products/:productId/publish",   ctrl.publishProduct);
+router.post  ("/products/:productId/publish-catalog", ctrl.publishCatalogProduct);
 router.patch ("/listings/:mlItemId",            ctrl.updateListingStatus);
 
 router.post  ("/combos",                        ctrl.createCombo);

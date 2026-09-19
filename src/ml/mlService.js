@@ -192,6 +192,65 @@ export async function getRawCategoryAttributes(categoryId) {
   return apiGet(`/categories/${categoryId}/attributes`);
 }
 
+// ── Publicación de catálogo (buy box) ───────────────────────────
+
+// Búsqueda del catálogo compartido de ML — cada resultado es un producto ya verificado por ML
+// (título/atributos/fotos propios), NO una publicación de un vendedor puntual. `catalog_product_id`
+// es lo que hay que guardar/mandar para linkear la futura publicación a ese producto. Se
+// normaliza a camelCase acá mismo para no filtrar snake_case de ML al resto del código — mismo
+// criterio que el resto de este archivo.
+export async function searchCatalogProducts(token, siteId, query, { limit = 10, offset = 0 } = {}) {
+  const params = new URLSearchParams({ site_id: siteId, q: query, status: "active", limit, offset });
+  const data = await apiGet(`/products/search?${params}`, token);
+  const items = (data.results || []).map(r => ({
+    catalogProductId: r.catalog_product_id || r.id,
+    domainId:         r.domain_id,
+    name:             r.name,
+    attributes:       (r.attributes || []).map(a => ({ id: a.id, name: a.name, valueName: a.value_name })),
+    pictures:         (r.pictures || []).map(p => p.url),
+    listingStrategy:  r.settings?.listing_strategy || null,
+  }));
+  return { items, total: data.paging?.total ?? items.length };
+}
+
+// GET /products/{catalog_product_id} NO devuelve category_id (solo domain_id) — confirmado
+// empíricamente (04/09) — pero POST /items sí lo exige siempre, catálogo o no. Se resuelve
+// reusando el mismo domain_discovery que ya usa suggestCategory() para el buscador de categoría
+// del wizard estándar: UNA sola consulta con el mismo texto de búsqueda ya devuelve varios pares
+// domain_id/category_id, así que alcanza con pedirla una vez por búsqueda de catálogo (no una
+// vez por resultado) y hacer el matching por domain_id en el caller (ver searchCatalog en
+// mlController.js).
+export async function getDomainCategoryMap(siteId, query) {
+  const data = await apiGet(`/sites/${siteId}/domain_discovery/search?q=${encodeURIComponent(query)}`);
+  return data.map(d => ({ domainId: d.domain_id, categoryId: d.category_id }));
+}
+
+// Crea una publicación de catálogo — a diferencia de createItem, ML completa solo título,
+// fotos y atributos a partir de catalog_product_id (confirmado empíricamente, item real
+// MLA2063638529: sin mandar title/pictures/attributes, ML los completó los 18 atributos, el
+// título y 5 fotos del producto de catálogo). Por eso NO se porta acá el fallback
+// family_name→title de createItem (es una particularidad de /items sin catálogo, no hay
+// evidencia de que aplique acá) ni el relleno de atributos/GTIN/paquete que sí hace falta para
+// una publicación propia.
+export async function createCatalogItem(token, { catalogProductId, categoryId, price, currencyId = "ARS", stock, condition = "new", shippingFree, dimensions, listingTypeId = "gold_special", tags, attributes }) {
+  const body = {
+    category_id: categoryId, price, currency_id: currencyId,
+    available_quantity: stock, condition,
+    catalog_product_id: catalogProductId, catalog_listing: true,
+    listing_type_id: listingTypeId,
+    shipping: { mode: "me2", free_shipping: !!shippingFree, ...(dimensions ? { dimensions } : {}) },
+    ...(tags?.length ? { tags } : {}),
+    // Normalmente innecesario (ML completa los atributos solo desde catalog_product_id) — solo
+    // se manda si el vendedor tuvo que completar un atributo puntual que ML pidió igual (ver
+    // missingAttribute en createMlItem/mlController.js).
+    ...(attributes?.length ? { attributes } : {}),
+  };
+  const result = await apiWriteRaw("POST", "/items", token, body);
+  if (!result.ok) throwWriteError("POST", "/items", result.data, result.status);
+  const item = result.data;
+  return { mlItemId: item.id, permalink: item.permalink, status: item.status, familyId: null, usedClassicFallback: false };
+}
+
 // Algunas categorías ya usan el modelo nuevo de ML ("User Products"/variaciones, pide
 // `family_name` y rechaza `title`) y otras todavía usan el modelo clásico (pide `title` y
 // rechaza `family_name`) — no hay forma de saber cuál es de antemano sin probar, así que
