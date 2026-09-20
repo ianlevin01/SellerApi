@@ -401,9 +401,14 @@ export async function updateListingProduct(sellerId, mlItemId, productId) {
   return rows[0] || null;
 }
 
+// Estados que representan una venta real y confirmada — mismo criterio que CONFIRMED en
+// mlStatsRepository.js (KPIs de Estadísticas). Sin este filtro, net_revenue_total contaría
+// pedidos pendientes/cancelados/rechazados como si ya hubieran generado ganancia real.
+const CONFIRMED_ORDER_COLORS = ["paid", "packaged", "shipped"];
+
 export async function getListingsBySeller(sellerId) {
   const { rows } = await pool.query(
-    `SELECT l.*, p.name AS product_name, p.code AS sku,
+    `SELECT l.*, p.name AS product_name, p.code AS sku, p.costo_usd,
             (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
             GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
               - COALESCE(p.stock_reserva, 0)) AS available_stock,
@@ -416,13 +421,24 @@ export async function getListingsBySeller(sellerId) {
               JOIN web_orders wo ON wo.id = woi.web_order_id
               WHERE woi.ml_item_id = l.ml_item_id AND wo.seller_id = l.seller_id AND wo.channel = 'mercadolibre'
             ), 0) AS units_sold,
+            -- Plata real recibida (precio de venta menos la comisión real que cobró ML), suma
+            -- de TODAS las ventas confirmadas de esta publicación puntual — no es una estimación
+            -- a partir del precio actual como el "Recibís" del box de fees (ver mlController.
+            -- getListingStats), es lo que efectivamente entró por esta publicación hasta ahora.
+            COALESCE((
+              SELECT SUM(woi.unit_price * woi.quantity) - SUM(COALESCE(woi.ml_sale_fee, 0) * woi.quantity)
+              FROM web_order_items woi
+              JOIN web_orders wo ON wo.id = woi.web_order_id
+              WHERE woi.ml_item_id = l.ml_item_id AND wo.seller_id = l.seller_id AND wo.channel = 'mercadolibre'
+                AND wo.color = ANY($2::text[])
+            ), 0) AS net_revenue_total,
             mc.name AS combo_name
      FROM ml_listings l
      LEFT JOIN products p ON p.id = l.product_id
      LEFT JOIN ml_combos mc ON mc.id = l.ml_combo_id
      WHERE l.seller_id = $1
      ORDER BY l.updated_at DESC`,
-    [sellerId]
+    [sellerId, CONFIRMED_ORDER_COLORS]
   );
 
   const comboIds = rows.filter(r => r.ml_combo_id).map(r => r.ml_combo_id);
@@ -439,6 +455,7 @@ export async function getListingsBySeller(sellerId) {
       image_key: d?.imageKey || null,
       available_stock: d?.availableStock ?? 0,
       units_sold: d?.unitsSold ?? 0,
+      costo_usd: d?.unitCostUsd ?? null,
     };
   });
 }
@@ -450,7 +467,7 @@ export async function getListingsBySeller(sellerId) {
 // cuando un mismo producto tiene más de una publicación).
 async function getComboDisplayDetails(comboIds) {
   const { rows } = await pool.query(
-    `SELECT cp.ml_combo_id, cp.product_id, cp.quantity, p.name,
+    `SELECT cp.ml_combo_id, cp.product_id, cp.quantity, p.name, p.costo_usd,
             (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
             GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
               - COALESCE(p.stock_reserva, 0)) AS product_available_stock,
@@ -480,6 +497,10 @@ async function getComboDisplayDetails(comboIds) {
       imageKey: products.find(p => p.image_key)?.image_key || null,
       availableStock: Math.min(...products.map(p => Math.floor(Number(p.product_available_stock) / (p.quantity || 1)))),
       unitsSold: Math.floor(Number(products[0].product_units_sold) / (products[0].quantity || 1)),
+      // Costo crudo en USD del combo entero (suma de cada miembro × su cantidad, sin margen
+      // todavía) — el margen/plan/override se aplica una sola vez, después, en
+      // mlListingService.getListings, con la misma fórmula que un producto suelto.
+      unitCostUsd: products.reduce((sum, p) => sum + Number(p.costo_usd || 0) * (p.quantity || 1), 0),
     });
   }
   return result;

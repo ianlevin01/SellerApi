@@ -1132,13 +1132,33 @@ export async function getListings(sellerId) {
     image_url: l.image_key ? await signKey(l.image_key) : null,
   })));
 
+  // Costo y ganancia — misma fórmula que getPriceFloor (calcShownCost/shownCostWithOverride),
+  // pidiendo cotización/plan/override UNA sola vez para todo el vendedor (no cambian entre
+  // publicaciones) en vez de una vez por fila. costo_usd viene null para combos sin miembros
+  // con costo cargado y para publicaciones huérfanas (product_id borrado) — en esos casos no
+  // se puede calcular nada y quedan en null, no en 0 (0 sería un costo real, no "no disponible").
+  const [cotizacion, { plan_id }, markupPct] = await Promise.all([
+    getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId),
+  ]);
+  const platformPct = getSellerPlatformPct(0);
+  const withCostAndProfit = withProductImages.map(l => {
+    const unitCost = l.costo_usd != null
+      ? shownCostWithOverride(l.costo_usd, cotizacion, platformPct, plan_id, markupPct)
+      : null;
+    return {
+      ...l,
+      unit_cost: unitCost,
+      profit_total: unitCost != null ? Number(l.net_revenue_total) - unitCost * Number(l.units_sold) : null,
+    };
+  });
+
   // Foto real de la publicación en Mercado Libre (no la del producto de Ventaz vinculado) — se
   // pide en vivo, sin cachear, a pedido explícito: más lento que cachear pero sin agregar
   // columnas ni un mecanismo de refresco. Un batch fallido no tira abajo el resto de la lista.
   const token = await getValidToken(sellerId);
-  if (!token) return withProductImages;
+  if (!token) return withCostAndProfit;
 
-  const itemIds = withProductImages.map(l => l.ml_item_id);
+  const itemIds = withCostAndProfit.map(l => l.ml_item_id);
   const batches = [];
   for (let i = 0; i < itemIds.length; i += svc.ML_MULTIGET_BATCH_SIZE) {
     batches.push(itemIds.slice(i, i + svc.ML_MULTIGET_BATCH_SIZE));
@@ -1149,7 +1169,7 @@ export async function getListings(sellerId) {
   const thumbByItemId = new Map(rawItems.map(i =>
     [i.id, i.thumbnail || i.pictures?.[0]?.secure_url || i.pictures?.[0]?.url || null]));
 
-  return withProductImages.map(l => ({ ...l, ml_thumbnail_url: thumbByItemId.get(l.ml_item_id) || null }));
+  return withCostAndProfit.map(l => ({ ...l, ml_thumbnail_url: thumbByItemId.get(l.ml_item_id) || null }));
 }
 
 // Publicaciones reales del vendedor en Mercado Libre (en vivo, no lo que ya tenemos en
