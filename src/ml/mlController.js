@@ -10,6 +10,13 @@ import * as statsSvc from "./mlStatsService.js";
 const SELLER_APP = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 const REDIRECT_BASE = `${SELLER_APP}/mercado-libre`;
 
+// Bloqueo temporal desactivado a pedido — permite publicar/agregar variantes/combos sin
+// tarjeta guardada. Sin tarjeta, Ventaz no tiene forma de cobrar automáticamente la comisión
+// de esas ventas (ver mlWalletService.chargeForSale) hasta que el vendedor cargue una.
+// Para reactivar el bloqueo: ML_REQUIRE_CARD_TO_PUBLISH=true en el .env del servidor y reiniciar
+// (no hace falta un nuevo deploy).
+const REQUIRE_CARD_TO_PUBLISH = process.env.ML_REQUIRE_CARD_TO_PUBLISH === "true";
+
 // GET /seller/ml/connect
 export async function getConnectUrl(req, res) {
   try {
@@ -516,9 +523,11 @@ export async function generatePicture(req, res) {
 // POST /seller/ml/products/:productId/publish
 export async function publishProduct(req, res) {
   try {
-    const card = await walletSvc.getCardStatus(req.seller.id);
-    if (!card.hasCard) {
-      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    if (REQUIRE_CARD_TO_PUBLISH) {
+      const card = await walletSvc.getCardStatus(req.seller.id);
+      if (!card.hasCard) {
+        return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+      }
     }
     const listing = await listingSvc.publishProduct(req.seller.id, req.params.productId, req.body);
     return res.json(listing);
@@ -538,9 +547,11 @@ export async function publishProduct(req, res) {
 // banner de atributo faltante sin código nuevo.
 export async function publishCatalogProduct(req, res) {
   try {
-    const card = await walletSvc.getCardStatus(req.seller.id);
-    if (!card.hasCard) {
-      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    if (REQUIRE_CARD_TO_PUBLISH) {
+      const card = await walletSvc.getCardStatus(req.seller.id);
+      if (!card.hasCard) {
+        return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+      }
     }
     const listing = await listingSvc.publishCatalogProduct(req.seller.id, req.params.productId, req.body);
     return res.json(listing);
@@ -590,9 +601,11 @@ export async function getListingPictures(req, res) {
 // POST /seller/ml/listings/:mlItemId/variants
 export async function addVariants(req, res) {
   try {
-    const card = await walletSvc.getCardStatus(req.seller.id);
-    if (!card.hasCard) {
-      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    if (REQUIRE_CARD_TO_PUBLISH) {
+      const card = await walletSvc.getCardStatus(req.seller.id);
+      if (!card.hasCard) {
+        return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+      }
     }
     const result = await listingSvc.addVariantsToListing(req.seller.id, req.params.mlItemId, req.body);
     return res.json(result);
@@ -644,9 +657,11 @@ export async function updateComboQuantities(req, res) {
 // POST /seller/ml/combos/:comboId/publish
 export async function publishCombo(req, res) {
   try {
-    const card = await walletSvc.getCardStatus(req.seller.id);
-    if (!card.hasCard) {
-      return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+    if (REQUIRE_CARD_TO_PUBLISH) {
+      const card = await walletSvc.getCardStatus(req.seller.id);
+      if (!card.hasCard) {
+        return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+      }
     }
     const listing = await listingSvc.publishCombo(req.seller.id, req.params.comboId, req.body);
     return res.json(listing);
