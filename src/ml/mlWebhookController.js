@@ -96,11 +96,35 @@ async function handleOrder(conn, resourcePath) {
   await processOrder(conn, order);
 }
 
+// ML manda notificaciones del topic "orders_v2" ante CUALQUIER cambio del pedido (creado,
+// pagado, enviado, entregado, cancelado...), no solo cuando se genera la venta — así que la
+// primera vez que Ventaz ve un ml_order_id puede no ser porque se acaba de vender, sino porque
+// el pedido tuvo cualquier otro evento (típicamente un cambio de estado de envío) y ML volvió a
+// notificar. Si eso pasa con un pedido que Ventaz nunca había visto Y que además es viejo (se
+// vendió mucho antes de esta notificación — caso real: cuenta recién conectada con historial
+// previo de ventas en Mercado Libre, ver seller jmgrgurevic@gmail.com), no es "la venta en sí" y
+// no debe generar ningún registro — solo se registra acá una venta que Ventaz ve nacer de verdad.
+// 24hs es un margen amplio para cualquier demora real de entrega del webhook (que en la práctica
+// es de segundos) sin dejar pasar pedidos que en realidad son viejos.
+const ORDER_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 // Todo lo que pasa una vez que ya tenemos el `order` de ML (venga de svc.getOrder en el webhook
 // real, o de un pedido sintético armado a mano para probar el flujo sin una venta real — ver
 // scripts/simulateMlSale.mjs). Separado de handleOrder() para que el script de prueba pueda
 // ejercitar exactamente esta misma lógica sin necesitar golpear la API de ML.
 export async function processOrder(conn, order) {
+  const { rows: existing } = await pool.query(
+    `SELECT 1 FROM web_orders WHERE ml_order_id = $1`,
+    [String(order.id)]
+  );
+  if (!existing[0]) {
+    const ageMs = Date.now() - new Date(order.date_created).getTime();
+    if (!Number.isFinite(ageMs) || ageMs > ORDER_FRESH_WINDOW_MS) {
+      console.warn(`[ml-webhook] pedido ${order.id} no registrado y no es reciente (date_created=${order.date_created}) — se ignora, no es la notificación de la venta`);
+      return;
+    }
+  }
+
   // "Reclamamos" el pedido con un INSERT atómico ANTES de tocar nada más (reservas de stock,
   // cálculo de costo, mail) — ML puede mandar la notificación de una misma venta más de una vez
   // casi al mismo tiempo (reintento, o dos eventos del mismo pedido), y un SELECT-y-después-

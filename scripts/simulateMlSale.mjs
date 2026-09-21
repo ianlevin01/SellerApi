@@ -82,6 +82,7 @@ async function main() {
   const unitPrice = Number(listing.price) || 10000;
   const order = {
     id: fakeOrderId,
+    date_created: new Date().toISOString(), // processOrder() ignora pedidos viejos no registrados — ver ORDER_FRESH_WINDOW_MS
     total_amount: unitPrice * qty,
     order_items: [{ item: { id: listing.ml_item_id }, quantity: qty, unit_price: unitPrice }],
     buyer: { nickname: "Comprador de prueba", email: null, phone: { number: null } },
