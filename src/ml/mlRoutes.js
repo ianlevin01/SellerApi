@@ -51,6 +51,7 @@ router.get   ("/listing-fees",                  ctrl.getListingFees);
 router.get   ("/listings/:mlItemId/stats",       ctrl.getListingStats);
 router.get   ("/listings/:mlItemId/pictures",    ctrl.getListingPictures);
 router.post  ("/listings/:mlItemId/variants",    ctrl.addVariants);
+router.post  ("/listings/:mlItemId/republish",   ctrl.republishListing);
 router.get   ("/listings/:mlItemId/picture-status", ctrl.getPictureStatus);
 router.get   ("/listings/:mlItemId/live-preview",   ctrl.getLiveListingPreview);
 router.post  ("/products/:productId/publish",   ctrl.publishProduct);

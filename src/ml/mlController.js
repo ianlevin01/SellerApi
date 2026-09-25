@@ -68,6 +68,7 @@ export async function getStatus(req, res) {
     return res.json({
       connected:        true,
       ml_nickname:      conn.ml_nickname,
+      ml_user_id:       conn.ml_user_id,
       site_id:          conn.site_id,
       token_expires_at: conn.token_expires_at,
     });
@@ -667,6 +668,30 @@ export async function publishCombo(req, res) {
     return res.json(listing);
   } catch (err) {
     console.error("[ml] publishCombo:", err.message);
+    return res.status(err.status || 500).json({
+      message: err.message || "Error",
+      ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),
+      ...(err.addressMismatch ? { addressMismatch: true, currentAddress: err.currentAddress, warehouseAddress: err.warehouseAddress, changeAddressUrl: err.changeAddressUrl } : {}),
+      ...(err.accountDataIncomplete ? { accountDataIncomplete: true, kycUrl: err.kycUrl } : {}),
+    });
+  }
+}
+
+// POST /seller/ml/listings/:mlItemId/republish — republica una publicación de OTRA cuenta de
+// ML en la cuenta conectada ahora mismo (crea una publicación nueva, ver comentario en
+// mlListingService.republishOnCurrentAccount).
+export async function republishListing(req, res) {
+  try {
+    if (REQUIRE_CARD_TO_PUBLISH) {
+      const card = await walletSvc.getCardStatus(req.seller.id);
+      if (!card.hasCard) {
+        return res.status(400).json({ message: "Guardá una tarjeta antes de publicar en Mercado Libre" });
+      }
+    }
+    const listing = await listingSvc.republishOnCurrentAccount(req.seller.id, req.params.mlItemId);
+    return res.json(listing);
+  } catch (err) {
+    console.error("[ml] republishListing:", err.message);
     return res.status(err.status || 500).json({
       message: err.message || "Error",
       ...(err.missingAttribute ? { missingAttribute: err.missingAttribute } : {}),

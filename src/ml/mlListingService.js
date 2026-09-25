@@ -1016,6 +1016,55 @@ export async function publishCombo(sellerId, comboId, config) {
   return { ...listing, installmentTagsApplied: item.installmentTagsApplied };
 }
 
+// Vuelve a publicar, en la cuenta de ML conectada ahora mismo, una publicación que pertenece a
+// OTRA cuenta (el vendedor desconectó esa cuenta y conectó una distinta). Mercado Libre no
+// permite transferir una publicación existente entre cuentas por API — el ítem le pertenece a
+// la cuenta que lo creó — así que esto crea una publicación NUEVA (mismo producto/combo,
+// categoría, atributos, precio y envío gratis que tenía la vieja, fotos actuales del producto)
+// con un ml_item_id nuevo, no un "mover". La publicación vieja queda intacta en la cuenta
+// anterior — Ventaz ya no tiene token de esa cuenta para tocarla, el vendedor tiene que
+// pausarla/cerrarla ahí a mano si no la quiere más activa en simultáneo.
+export async function republishOnCurrentAccount(sellerId, oldMlItemId) {
+  const conn = await repo.getConnection(sellerId);
+  if (!conn) { const e = new Error("Mercado Libre no está conectado"); e.status = 400; throw e; }
+
+  const old = await repo.getListingForVariants(oldMlItemId, sellerId);
+  if (!old) { const e = new Error("Publicación no encontrada"); e.status = 404; throw e; }
+  if (old.ml_account_id === conn.ml_user_id) {
+    const e = new Error("Esta publicación ya pertenece a la cuenta de Mercado Libre conectada actualmente");
+    e.status = 400;
+    throw e;
+  }
+
+  const shared = { price: Number(old.price), shippingFree: !!old.shipping_free, listingTypeId: "gold_special" };
+
+  if (old.catalog_product_id) {
+    return await publishCatalogProduct(sellerId, old.product_id, {
+      ...shared, catalogProductId: old.catalog_product_id, categoryId: old.ml_category_id,
+    });
+  }
+
+  if (old.ml_combo_id) {
+    return await publishCombo(sellerId, old.ml_combo_id, {
+      ...shared, mlCategoryId: old.ml_category_id, attributes: old.attributes || [],
+    });
+  }
+
+  if (!old.product_id) {
+    const e = new Error("Esta publicación no tiene un producto de Ventaz asociado — no se puede republicar automáticamente");
+    e.status = 400;
+    throw e;
+  }
+
+  const images = await imagesService.getAllImagesForProduct(sellerId, old.product_id).catch(() => []);
+  return await publishProduct(sellerId, old.product_id, {
+    ...shared,
+    mlCategoryId: old.ml_category_id,
+    attributes: old.attributes || [],
+    orderedImages: images.map(img => ({ type: "existing", key: img.key })),
+  });
+}
+
 // Empuja la cantidad disponible actual a ML — se usa desde el job de sync de stock para que
 // la publicación no muestre más unidades de las que realmente quedan del pool compartido.
 //
