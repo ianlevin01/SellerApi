@@ -7,6 +7,7 @@ import { getCotizacion } from "../payouts/payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan, getPlanMlListingLimit } from "../utils/sellerPlan.js";
 import * as imagesService from "../images/imagesService.js";
+import { estimateAndSaveDimensions } from "../products/productDimensionsService.js";
 
 // Override puntual de costo para cuentas específicas de ML — a diferencia del "costo real"
 // (raw_cost_mode) de ecommerce, acá se muestra el costo con un margen fijo elegido por cuenta
@@ -75,7 +76,22 @@ async function getProductForListing(productId) {
      FROM products p WHERE p.id = $1 AND p.active = true`,
     [productId]
   );
-  return rows[0] || null;
+  const product = rows[0];
+  if (!product) return null;
+  // Sin peso/volumen, ML rechaza la publicación pidiendo SELLER_PACKAGE_HEIGHT/WIDTH/LENGTH/
+  // WEIGHT (ver fillMissingPackageDimensions) — en vez de mostrarle ese error al vendedor, se
+  // estima acá mismo (misma IA que el backfill masivo, scripts/inferDimensions.js) y se sigue.
+  if (!product.weight_grams || !product.volume_cm3) {
+    const estimated = await estimateAndSaveDimensions(productId).catch(err => {
+      console.error("[ml] no se pudo estimar dimensiones para", productId, err.message);
+      return null;
+    });
+    if (estimated) {
+      product.weight_grams = estimated.weightGrams;
+      product.volume_cm3   = estimated.volumeCm3;
+    }
+  }
+  return product;
 }
 
 // ML pide "LxWxHcm,pesoGramos" — solo tenemos el volumen total, no los 3 lados por separado,
@@ -956,6 +972,20 @@ export async function publishCombo(sellerId, comboId, config) {
   if (!products.length) { const e = new Error("El combo no tiene productos"); e.status = 400; throw e; }
   if (!config.mlCategoryId) { const e = new Error("Falta la categoría de Mercado Libre"); e.status = 400; throw e; }
   if (!config.price || config.price <= 0) { const e = new Error("Falta el precio para Mercado Libre"); e.status = 400; throw e; }
+
+  // Mismo fallback que getProductForListing — si algún miembro del combo todavía no tiene
+  // peso/volumen cargado, se estima acá antes de sumar los totales del combo.
+  await Promise.all(products.map(async p => {
+    if (p.weight_grams && p.volume_cm3) return;
+    const estimated = await estimateAndSaveDimensions(p.product_id).catch(err => {
+      console.error("[ml] no se pudo estimar dimensiones para", p.product_id, err.message);
+      return null;
+    });
+    if (estimated) {
+      p.weight_grams = estimated.weightGrams;
+      p.volume_cm3   = estimated.volumeCm3;
+    }
+  }));
 
   await checkMlListingLimit(sellerId);
   await assertShippingAddressOk(sellerId);
