@@ -50,8 +50,14 @@ export async function getProducts(pageId, sellerId, filters) {
   const limit  = Math.min(Number(filters.limit) || 20, 500);
   const offset = Number(filters.offset) || 0;
 
+  // Misma ventana (7 días, top 10) que ya usa el badge "Top ventas" de las cards — una sola
+  // definición de "top selling" en vez de que el filtro y el badge puedan desincronizarse.
+  const topSellingIds = filters.topSellingOnly
+    ? await productsRepository.getTopSellingProductIds({ days: 7, limit: 10 })
+    : null;
+
   const [{ rows, total }, cotizacion, { plan_id }, overrides] = await Promise.all([
-    productsRepository.findAll({ pageId, sellerId, ...filters, limit, offset }),
+    productsRepository.findAll({ pageId, sellerId, ...filters, topSellingIds, limit, offset }),
     getCotizacion(),
     getSellerPlan(sellerId),
     getCostOverrides(sellerId),

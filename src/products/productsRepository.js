@@ -5,7 +5,7 @@ import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
 // SQL fragment: "p.negocio_id = ANY(ARRAY['uuid1','uuid2']::uuid[])"
 const NEGOCIO_FILTER = `p.negocio_id = ANY(ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[])`;
 
-export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, minStock, limit = 20, offset = 0 }) {
+export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, notMine, minStock, topSellingIds, limit = 20, offset = 0 }) {
   let query = `
     SELECT
       p.id, p.code, p.name, p.description, p.active,
@@ -115,6 +115,13 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
     // el alias directamente en el WHERE de la misma query.
     query += ` AND GREATEST(0, COALESCE((SELECT SUM(s3.quantity) FROM stock s3 WHERE s3.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) > $${idx}`;
     params.push(minStock);
+    idx++;
+  }
+  if (topSellingIds) {
+    // Array vacío (nadie vendió nada en la ventana) filtra correctamente todo — ANY sobre un
+    // array vacío nunca matchea, no hace falta un caso especial.
+    query += ` AND p.id = ANY($${idx}::uuid[])`;
+    params.push(topSellingIds);
     idx++;
   }
 
