@@ -302,9 +302,23 @@ export async function searchCatalog(req, res) {
       svc.searchCatalogProducts(token, siteId, q, { offset }),
       svc.getDomainCategoryMap(siteId, q),
     ]);
-    const enriched = items.map(r => ({
-      ...r,
-      categoryId: domainMap.find(d => d.domainId === r.domainId)?.categoryId || null,
+    // domain_discovery con la búsqueda del vendedor (q) solo devuelve un puñado de los dominios
+    // más relevantes para ese texto — confirmado en vivo (08/10): con una búsqueda genérica,
+    // resultados de catálogo de un dominio DISTINTO (ej. "Sombrero... Paragua..." → PARTY_HATS,
+    // dentro de una búsqueda de sombrillas) quedaban sin categoryId porque su domainId nunca
+    // aparecía en ese domainMap compartido — el vendedor recién se enteraba al final del wizard
+    // ("Falta la categoría de Mercado Libre"), o el paso de precio no mostraba nada (PriceStep
+    // necesita categoryId para calcular comisión). Acá se reintenta domain_discovery con el
+    // nombre PROPIO de cada resultado que no resolvió — mucho más específico que la búsqueda
+    // genérica, resuelve los casos reales que probamos. Solo se paga el costo extra para los
+    // resultados que realmente lo necesitan, no para todos.
+    const enriched = await Promise.all(items.map(async r => {
+      let categoryId = domainMap.find(d => d.domainId === r.domainId)?.categoryId || null;
+      if (!categoryId && r.name) {
+        const fallbackMap = await svc.getDomainCategoryMap(siteId, r.name).catch(() => []);
+        categoryId = fallbackMap.find(d => d.domainId === r.domainId)?.categoryId || null;
+      }
+      return { ...r, categoryId };
     }));
     return res.json({ items: enriched, total, offset });
   } catch (err) {
