@@ -6,6 +6,8 @@ import { getValidToken } from "./mlTokenService.js";
 import { getSellerPlan, getPlanMlGraceHours } from "../utils/sellerPlan.js";
 import * as aiSvc from "./mlAiService.js";
 import * as statsSvc from "./mlStatsService.js";
+import * as questionsRepo from "./mlQuestionsRepository.js";
+import { signKey } from "../utils/s3Client.js";
 
 const SELLER_APP = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
 const REDIRECT_BASE = `${SELLER_APP}/mercado-libre`;
@@ -723,6 +725,78 @@ export async function updateListingStatus(req, res) {
     return res.json({ ok: true });
   } catch (err) {
     console.error("[ml] updateListingStatus:", err.message);
+    return res.status(err.status || 500).json({ message: err.message || "Error" });
+  }
+}
+
+// ── Chats (Preguntas y Respuestas con respuesta automática de IA) ───────────
+
+// GET /seller/ml/ai-reply-settings
+export async function getAiReplySettings(req, res) {
+  try {
+    const settings = await questionsRepo.getSettings(req.seller.id);
+    return res.json({
+      enabled: settings.enabled,
+      businessRules: settings.business_rules,
+      productInfoInstructions: settings.product_info_instructions,
+    });
+  } catch (err) {
+    console.error("[ml] getAiReplySettings:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// PUT /seller/ml/ai-reply-settings  { enabled, businessRules, productInfoInstructions }
+// Campos opcionales a propósito (ver upsertSettings) — permite que el switch de la barra
+// superior mande solo { enabled } sin pisar las reglas/información ya cargadas.
+export async function updateAiReplySettings(req, res) {
+  try {
+    const { enabled, businessRules, productInfoInstructions } = req.body;
+    await questionsRepo.upsertSettings(req.seller.id, {
+      enabled: enabled === undefined ? undefined : !!enabled,
+      businessRules: businessRules === undefined ? undefined : (businessRules || ""),
+      productInfoInstructions: productInfoInstructions === undefined ? undefined : (productInfoInstructions || ""),
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[ml] updateAiReplySettings:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// GET /seller/ml/questions
+export async function getQuestions(req, res) {
+  try {
+    const rows = await questionsRepo.listForSeller(req.seller.id);
+    const questions = await Promise.all(rows.map(async q => ({
+      ...q,
+      image_url: q.image_key ? await signKey(q.image_key).catch(() => null) : null,
+    })));
+    return res.json({ questions });
+  } catch (err) {
+    console.error("[ml] getQuestions:", err.message);
+    return res.status(500).json({ message: "Error" });
+  }
+}
+
+// POST /seller/ml/questions/:id/answer  { text } — respuesta manual del vendedor, para las que
+// quedaron esperando un humano (o para contestar cualquiera a mano, aunque no esté escalada).
+export async function answerQuestionManually(req, res) {
+  try {
+    const { text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ message: "Falta el texto de la respuesta" });
+
+    const question = await questionsRepo.getQuestionById(req.params.id, req.seller.id);
+    if (!question) return res.status(404).json({ message: "Pregunta no encontrada" });
+
+    const token = await getValidToken(req.seller.id);
+    if (!token) return res.status(400).json({ message: "Mercado Libre no está conectado" });
+
+    await svc.answerQuestion(token, question.ml_question_id, text.trim().slice(0, 2000));
+    await questionsRepo.markAnswered(question.id, { answerText: text.trim().slice(0, 2000), answeredBy: "human", needsHuman: false });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[ml] answerQuestionManually:", err.message);
     return res.status(err.status || 500).json({ message: err.message || "Error" });
   }
 }

@@ -8,6 +8,8 @@ import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
 import { sendMlSaleNotification, sendMlQuestionNotification, sendMlClaimNotification } from "../email/buyerEmails.js";
 import { tryUseSellerStock, markItemSellerStock } from "../purchase/purchaseRepository.js";
+import * as questionsRepo from "./mlQuestionsRepository.js";
+import { answerBuyerQuestion } from "../products/productAiService.js";
 
 const APP_ID = process.env.ML_CLIENT_ID;
 
@@ -354,18 +356,112 @@ async function handleShipmentUpdate(conn, resourcePath) {
   );
 }
 
+// ML dispara el topic "questions" ante CUALQUIER cambio del JSON de la pregunta (confirmado con
+// su equipo de developers, 13/10) — no solo al crearse. Contestarla (desde la app de ML o desde
+// acá mismo) también cuenta como un cambio y vuelve a notificar. Antes este handler mandaba el
+// mail de "nueva pregunta" en CUALQUIERA de esos casos sin distinguir — por eso el mail llegaba
+// recién al contestarla (esa segunda notificación), no cuando el comprador preguntó de verdad.
+// Ahora se persiste la pregunta (INSERT idempotente por ml_question_id) y el mail de "nueva
+// pregunta" se manda SOLO la primera vez que Ventaz la ve.
 async function handleQuestion(conn, resourcePath) {
   const questionId = resourcePath.split("/").pop();
   const token = await getValidToken(conn.seller_id);
   if (!token) return;
   const q = await svc.getQuestion(token, questionId).catch(() => null);
-  const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [conn.seller_id])
+  if (!q) return;
+  await processQuestion(conn.seller_id, q);
+}
+
+// Todo lo que pasa una vez que ya tenemos el `q` real de ML — separado de handleQuestion() para
+// que scripts/simulateMlQuestion.mjs pueda ejercitar exactamente esta misma lógica con una
+// pregunta armada a mano, sin necesitar pegarle a la API de ML (mismo criterio que processOrder
+// más arriba).
+//
+// Filtro a propósito: si la publicación no tiene un producto de Ventaz vinculado (ml_listings sin
+// fila, o con product_id null — el caso típico de un vendedor que ya tenía publicaciones propias
+// en Mercado Libre antes de sumarse a Ventaz), la pregunta se ignora POR COMPLETO acá mismo: no
+// se guarda en ml_questions, no se manda mail, no aparece en "Chats" ni pasa por el bot. Ventaz
+// no tiene ninguna información real sobre ese producto como para hacer nada con esa pregunta.
+export async function processQuestion(sellerId, q) {
+  const mlItemId = String(q.item_id);
+  const { rows: listingRows } = await pool.query(`SELECT product_id FROM ml_listings WHERE ml_item_id = $1`, [mlItemId]);
+  const productId = listingRows[0]?.product_id || null;
+  if (!productId) return;
+
+  // Ya tiene respuesta (nuestro bot, un humano desde "Chats", o el vendedor directo desde la
+  // app de ML) — esta notificación es por ese cambio, no por una pregunta nueva. Si todavía no
+  // la teníamos guardada (la contestaron directo en ML, nunca pasó por acá), se guarda igual
+  // como ya resuelta, sin mandar ningún mail ni gastar una llamada a la IA.
+  if (q.answer?.text) {
+    const existing = await questionsRepo.getQuestionByMlId(String(q.id));
+    if (!existing) {
+      const inserted = await questionsRepo.insertQuestion(sellerId, {
+        mlQuestionId: String(q.id), mlItemId, productId,
+        buyerMlUserId: String(q.from?.id || ""), questionText: q.text || "",
+      });
+      if (inserted) await questionsRepo.markAnswered(inserted.id, { answerText: q.answer.text, answeredBy: "human", needsHuman: false });
+    }
+    return;
+  }
+
+  // Pregunta sin responder todavía — si ya la teníamos guardada, es una renotificación de otro
+  // cambio (ej. texto editado) y no una pregunta nueva: no se vuelve a mandar mail ni a procesar.
+  const existing = await questionsRepo.getQuestionByMlId(String(q.id));
+  if (existing) return;
+
+  const buyerMlUserId = String(q.from?.id || "");
+  const inserted = await questionsRepo.insertQuestion(sellerId, {
+    mlQuestionId: String(q.id), mlItemId, productId, buyerMlUserId, questionText: q.text || "",
+  });
+  if (!inserted) return; // otra notificación casi simultánea ya la insertó primero
+
+  const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId])
     .then(r => r.rows[0]?.email);
   if (sellerEmail) {
-    sendMlQuestionNotification(sellerEmail, {
-      itemTitle: q?.item_id, questionText: q?.text || "(no se pudo obtener el detalle)",
-    }).catch(() => {});
+    sendMlQuestionNotification(sellerEmail, { itemTitle: mlItemId, questionText: q.text || "(no se pudo obtener el detalle)" }).catch(() => {});
   }
+
+  const token = await getValidToken(sellerId);
+  if (!token) return; // se guardó igual — se puede responder a mano desde "Chats"
+  await tryAutoAnswer({ sellerId, token, questionRowId: inserted.id, mlQuestionId: String(q.id), mlItemId, productId, buyerMlUserId, questionText: q.text || "" });
+}
+
+// Separado de handleQuestion para que se pueda ejercitar solo (o reintentar a mano desde un
+// script) sin depender de un webhook real de ML.
+async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlItemId, productId, buyerMlUserId, questionText }) {
+  const settings = await questionsRepo.getSettings(sellerId);
+  if (!settings.enabled) return;
+  if (await questionsRepo.hasOpenHumanThread(sellerId, mlItemId, buyerMlUserId)) return; // este comprador ya tiene otra pregunta esperando un humano en esta publicación
+
+  const { rows } = await pool.query(
+    `SELECT p.name, p.description, p.admin_info, c.name AS category
+     FROM products p LEFT JOIN categories c ON c.id = p.category_id
+     WHERE p.id = $1`,
+    [productId]
+  );
+  const product = rows[0];
+  if (!product) return;
+
+  const { canAnswer, answer } = await answerBuyerQuestion({
+    questionText,
+    product: { name: product.name, description: product.description, adminInfo: product.admin_info, category: product.category },
+    businessRules: settings.business_rules,
+    productInfoInstructions: settings.product_info_instructions,
+  }).catch(err => {
+    console.error("[ml-questions] no se pudo generar respuesta con IA:", err.message);
+    return { canAnswer: false, answer: null };
+  });
+
+  const textToPost = canAnswer ? answer : "Te responderemos tu duda lo más pronto posible.";
+  await svc.answerQuestion(token, mlQuestionId, textToPost).catch(err => {
+    console.error("[ml-questions] no se pudo postear la respuesta en ML:", err.message);
+    return null;
+  }).then(async result => {
+    if (result === null) return; // falló el posteo — se deja la pregunta como estaba, se puede reintentar a mano desde "Chats"
+    await questionsRepo.markAnswered(questionRowId, {
+      answerText: textToPost, answeredBy: canAnswer ? "ai" : "pending", needsHuman: !canAnswer,
+    });
+  });
 }
 
 async function handleClaim(conn) {

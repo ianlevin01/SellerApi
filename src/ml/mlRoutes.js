@@ -58,6 +58,11 @@ router.post  ("/products/:productId/publish",   ctrl.publishProduct);
 router.post  ("/products/:productId/publish-catalog", ctrl.publishCatalogProduct);
 router.patch ("/listings/:mlItemId",            ctrl.updateListingStatus);
 
+router.get   ("/ai-reply-settings",             ctrl.getAiReplySettings);
+router.put   ("/ai-reply-settings",             ctrl.updateAiReplySettings);
+router.get   ("/questions",                     ctrl.getQuestions);
+router.post  ("/questions/:id/answer",          ctrl.answerQuestionManually);
+
 router.post  ("/combos",                        ctrl.createCombo);
 router.get   ("/combos/:comboId",               ctrl.getComboDetail);
 router.patch ("/combos/:comboId",               ctrl.updateComboQuantities);

@@ -178,3 +178,59 @@ Devolvé SOLO el texto reescrito, sin explicaciones.`,
 
   return res.choices[0].message.content.trim();
 }
+
+// ── Respuesta automática a preguntas de compradores en Mercado Libre ──────────
+// A diferencia del resto de este archivo (texto para mostrar/vender), acá la IA tiene que
+// declarar ELLA MISMA si tiene información suficiente para responder — no hay ninguna heurística
+// nuestra de "confianza" adivinando eso. Si no está seguro con los datos que tiene, canAnswer
+// tiene que dar false: mejor escalar a un humano que inventar una respuesta sobre un producto.
+// Límite real de ML para /answers: 2000 caracteres (confirmado con su equipo de developers,
+// 13/10) — se trunca acá mismo como red de seguridad, además de pedírselo en el prompt.
+const ML_ANSWER_MAX_CHARS = 2000;
+
+export async function answerBuyerQuestion({ questionText, product, businessRules, productInfoInstructions }) {
+  const ai = getClient();
+
+  const productBlock = [
+    `Nombre: ${product.name}`,
+    product.description ? `Descripción: ${product.description}` : null,
+    product.adminInfo   ? `Características (medidas, color, material, etc.): ${product.adminInfo}` : null,
+    product.category    ? `Categoría: ${product.category}` : null,
+  ].filter(Boolean).join("\n");
+
+  const res = await ai.chat.completions.create({
+    model:           "gpt-4o-mini",
+    max_tokens:      500,
+    temperature:     0.3,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `Sos el asistente de atención al cliente de un vendedor de Mercado Libre en Argentina. Tu única tarea es responder la pregunta de un comprador sobre UN producto puntual, usando SOLO la información que te paso abajo.
+
+REGLA PRINCIPAL: no inventes ningún dato (medida, material, color, stock, tiempo de envío, garantía, etc.) que no esté explícito en la información del producto o en las reglas del vendedor. Si la pregunta no se puede responder con certeza solo con esos datos, decí que no podés responder — NUNCA completes con un supuesto razonable ni con conocimiento general de productos similares.
+
+Reglas del negocio que definió el vendedor (cómo comportarte en determinadas situaciones — seguilas al pie de la letra, tienen prioridad):
+"${businessRules || "(el vendedor no cargó reglas específicas todavía)"}"
+
+Qué información de los productos mostrar (instrucciones del vendedor sobre qué compartir y qué no):
+"${productInfoInstructions || "(el vendedor no cargó instrucciones específicas todavía — usá tu criterio dentro de la información del producto)"}"
+
+Datos reales del producto:
+${productBlock}
+
+Estilo de respuesta: tono argentino informal-profesional, corto y directo (la respuesta se publica públicamente en la ficha del producto), máximo ${ML_ANSWER_MAX_CHARS} caracteres.
+
+Devolvé SOLO JSON válido: {"can_answer": true|false, "answer": "..."} — "answer" en null si can_answer es false.`,
+      },
+      { role: "user", content: `Pregunta del comprador: "${questionText}"` },
+    ],
+  });
+
+  const parsed = JSON.parse(res.choices[0].message.content);
+  const canAnswer = parsed.can_answer === true && typeof parsed.answer === "string" && parsed.answer.trim().length > 0;
+  return {
+    canAnswer,
+    answer: canAnswer ? parsed.answer.trim().slice(0, ML_ANSWER_MAX_CHARS) : null,
+  };
+}

@@ -546,6 +546,13 @@ export async function getQuestion(token, questionId) {
   return apiGet(`/questions/${questionId}`, token);
 }
 
+// Responde una pregunta pública de un comprador — confirmado con el equipo de developers de ML
+// (13/10): body real es { question_id, text }, límite duro de 2000 caracteres (el caller debe
+// truncar/validar ANTES de llegar acá, no es algo que ML trunque solo).
+export async function answerQuestion(token, questionId, text) {
+  return apiWrite("POST", "/answers", token, { question_id: Number(questionId), text });
+}
+
 // Etiquetas de envío en PDF para uno o más shipments del MISMO vendedor (máximo 50 por
 // request, límite de la propia API de ML). Requiere que el shipment esté en
 // ready_to_ship/ready_to_print — si no, ML devuelve error.
