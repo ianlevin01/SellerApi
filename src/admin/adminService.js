@@ -154,6 +154,27 @@ export async function getSalesReport(filters) {
   return repo.getSalesReport(filters);
 }
 
+// Token de cada seller involucrado, UNA sola vez por seller y en paralelo — antes se pedía
+// dentro del for-loop secuencial de abajo, así que con varios pedidos del mismo seller
+// intercalados con otros, el Map no evitaba nada (cada pedido esperaba su turno igual) y cada
+// getValidToken()/llamada a ML se encolaba una atrás de la otra.
+async function getTokensBySeller(sellerIds) {
+  const uniqueIds = [...new Set(sellerIds)];
+  const tokens = await Promise.all(uniqueIds.map(id => getValidToken(id).catch(() => null)));
+  return new Map(uniqueIds.map((id, i) => [id, tokens[i]]));
+}
+
+// Corre `fn` sobre `items` en paralelo, de a `concurrency` por vez — el admin esperaba hasta
+// 90+ pedidos pidiéndole a la API de ML UNO POR UNO, en serie (confirmado: con el backlog real
+// de la base esto superaba largamente los 15s de timeout del front, dejando la pantalla de
+// "Ventas" en blanco con un error de timeout). En lotes paralelos, el mismo trabajo tarda una
+// fracción del tiempo sin tener que sacarle nada a la pantalla.
+async function mapWithConcurrency(items, concurrency, fn) {
+  for (let i = 0; i < items.length; i += concurrency) {
+    await Promise.all(items.slice(i, i + concurrency).map(fn));
+  }
+}
+
 // El webhook de la orden puede llegar antes de que Mercado Libre termine de asignarle
 // logistic_type/SLA al envío — como esa orden nunca se vuelve a tocar (ver mlWebhookController,
 // el ON CONFLICT DO NOTHING solo procesa la primera notificación), queda en null para siempre
@@ -163,14 +184,12 @@ async function backfillMissingShipmentInfo(rows) {
   const pending = rows.filter(r => (!r.ml_logistic_type || !r.ml_dispatch_expected_date) && r.ml_shipment_id && !r.ml_dispatched_at);
   if (pending.length === 0) return;
 
-  const tokenBySeller = new Map();
-  for (const row of pending) {
+  const tokenBySeller = await getTokensBySeller(pending.map(r => r.seller_id));
+
+  await mapWithConcurrency(pending, 10, async row => {
     try {
-      if (!tokenBySeller.has(row.seller_id)) {
-        tokenBySeller.set(row.seller_id, await getValidToken(row.seller_id));
-      }
       const token = tokenBySeller.get(row.seller_id);
-      if (!token) continue;
+      if (!token) return;
 
       if (!row.ml_logistic_type) {
         const shipment = await mlSvc.getShipment(token, row.ml_shipment_id).catch(() => null);
@@ -190,7 +209,7 @@ async function backfillMissingShipmentInfo(rows) {
     } catch (err) {
       console.error(`[admin] no se pudo completar datos de envío del pedido ${row.id}:`, err.message);
     }
-  }
+  });
 }
 
 // "Día calendario" (America/Argentina/Buenos_Aires) de una fecha — para agrupar pedidos por
@@ -210,17 +229,15 @@ async function refreshDispatchStatus(rows) {
   const pending = rows.filter(r => !r.ml_dispatched_at && r.ml_shipment_id).slice(0, 200);
   if (pending.length === 0) return;
 
-  const tokenBySeller = new Map();
-  for (const row of pending) {
+  const tokenBySeller = await getTokensBySeller(pending.map(r => r.seller_id));
+
+  await mapWithConcurrency(pending, 10, async row => {
     try {
-      if (!tokenBySeller.has(row.seller_id)) {
-        tokenBySeller.set(row.seller_id, await getValidToken(row.seller_id));
-      }
       const token = tokenBySeller.get(row.seller_id);
-      if (!token) continue;
+      if (!token) return;
 
       const shipment = await mlSvc.getShipment(token, row.ml_shipment_id).catch(() => null);
-      if (!shipment) continue;
+      if (!shipment) return;
 
       const dispatched = mlSvc.isShipmentDispatched(shipment);
       row.ml_shipment_status = shipment.status || null;
@@ -235,7 +252,7 @@ async function refreshDispatchStatus(rows) {
     } catch (err) {
       console.error(`[admin] no se pudo refrescar el estado de despacho del pedido ${row.id}:`, err.message);
     }
-  }
+  });
 }
 
 // Marca cada venta con `shippable` — el bloqueo es por CUENTA, no por pedido puntual: si el
