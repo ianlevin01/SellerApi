@@ -20,6 +20,18 @@ export function calcShownCost(costUsd, cotizacion, platformPct, planId = "inicia
   return base * getPlanCostFactor(planId);
 }
 
+// Override puntual de costo de Mercado Libre para cuentas específicas (ver sellers.ml_cost_markup_pct,
+// cargado vía getSellerPlan) — costo + un % fijo elegido por cuenta, en vez del margen por tramos y
+// el factor de plan normales. Se usa en TODO lugar donde se calcula o cobra el costo de una venta de
+// ML para esa cuenta (webhook al procesar la venta, reasignación manual en AdminPanel, "Mis pedidos",
+// precio mínimo de publicación) — nunca solo para mostrar, también para lo que realmente se cobra.
+// overridePct == null => comportamiento estándar de siempre.
+export function shownCostWithOverride(costUsd, cotizacion, platformPct, planId, overridePct) {
+  if (!costUsd) return 0;
+  if (overridePct != null) return Math.round(Number(costUsd) * Number(cotizacion) * (1 + overridePct / 100));
+  return calcShownCost(costUsd, cotizacion, platformPct, planId);
+}
+
 // Ahorro por unidad respecto al tier base (30%)
 export function calcSavingsVsBase(costUsd, cotizacion, platformPct) {
   if (platformPct >= BASE_PCT) return 0;

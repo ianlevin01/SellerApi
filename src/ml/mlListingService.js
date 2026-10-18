@@ -4,27 +4,10 @@ import { getValidToken } from "./mlTokenService.js";
 import * as svc from "./mlService.js";
 import { signKey, getBuffer, uploadBuffer } from "../utils/s3Client.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlatformPct, shownCostWithOverride } from "../utils/pricing.js";
 import { getSellerPlan, getPlanMlListingLimit } from "../utils/sellerPlan.js";
 import * as imagesService from "../images/imagesService.js";
 import { estimateAndSaveDimensions } from "../products/productDimensionsService.js";
-
-// Override puntual de costo para cuentas específicas de ML — a diferencia del "costo real"
-// (raw_cost_mode) de ecommerce, acá se muestra el costo con un margen fijo elegido por cuenta
-// (ej. costo + 10%) en vez del margen por tramos normal. Null = comportamiento de siempre.
-// Solo afecta lo que se MUESTRA al publicar/calcular, no lo que se cobra de deuda en una venta
-// real (mlWebhookController.js sigue usando siempre el margen normal, para todos por igual).
-async function getMlCostMarkupPct(sellerId) {
-  const { rows } = await pool.query("SELECT ml_cost_markup_pct FROM sellers WHERE id = $1", [sellerId]);
-  const pct = rows[0]?.ml_cost_markup_pct;
-  return pct === null || pct === undefined ? null : Number(pct);
-}
-
-function shownCostWithOverride(costUsd, cotizacion, platformPct, planId, overridePct) {
-  if (!costUsd) return 0;
-  if (overridePct != null) return Math.round(Number(costUsd) * cotizacion * (1 + overridePct / 100));
-  return calcShownCost(costUsd, cotizacion, platformPct, planId);
-}
 
 // Precio mínimo al que se puede publicar en ML — mismo costo que Ventaz necesita recuperar
 // (ver mlWebhookController.js, misma fórmula). TODO: usar ventas reales del seller para el
@@ -35,16 +18,31 @@ function shownCostWithOverride(costUsd, cotizacion, platformPct, planId, overrid
 export async function getPriceFloor(sellerId, productId) {
   const { rows } = await pool.query(`SELECT costo_usd FROM products WHERE id = $1 AND active = true`, [productId]);
   if (!rows[0]) { const e = new Error("Producto no encontrado"); e.status = 404; throw e; }
-  const [cotizacion, { plan_id }, markupPct] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId)]);
+  const [cotizacion, { plan_id, ml_cost_markup_pct }] = await Promise.all([getCotizacion(), getSellerPlan(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  return shownCostWithOverride(rows[0].costo_usd, cotizacion, platformPct, plan_id, markupPct);
+  return shownCostWithOverride(rows[0].costo_usd, cotizacion, platformPct, plan_id, ml_cost_markup_pct);
 }
 
 // Peso/volumen para pedir el costo de envío en el wizard de publicar (el listado de productos
 // de ecommerce que alimenta el catálogo de ML no trae estos dos campos).
+// Mismo fallback que getProductForListing/publishCombo: si todavía no están cargados, se
+// estiman acá — sin esto, la vista previa de precio mostraba "No calculado" en productos sin
+// dimensiones aunque la publicación real sí los iba a estimar un paso después.
 export async function getProductShippingInfo(productId) {
   const { rows } = await pool.query(`SELECT weight_grams, volume_cm3 FROM products WHERE id = $1`, [productId]);
-  return { weightGrams: Number(rows[0]?.weight_grams || 0), volumeCm3: Number(rows[0]?.volume_cm3 || 0) };
+  let weightGrams = Number(rows[0]?.weight_grams || 0);
+  let volumeCm3   = Number(rows[0]?.volume_cm3 || 0);
+  if (!weightGrams || !volumeCm3) {
+    const estimated = await estimateAndSaveDimensions(productId).catch(err => {
+      console.error("[ml] no se pudo estimar dimensiones para", productId, err.message);
+      return null;
+    });
+    if (estimated) {
+      weightGrams = estimated.weightGrams;
+      volumeCm3   = estimated.volumeCm3;
+    }
+  }
+  return { weightGrams, volumeCm3 };
 }
 
 // Para la calculadora: buscar productos reales del catálogo por nombre y devolver ya
@@ -52,11 +50,10 @@ export async function getProductShippingInfo(productId) {
 // vendedor solo tenga que cargar precio/envío/cuotas.
 export async function searchProductsForCalculator(sellerId, search) {
   if (!search || search.trim().length < 2) return [];
-  const [rows, cotizacion, { plan_id }, markupPct] = await Promise.all([
+  const [rows, cotizacion, { plan_id, ml_cost_markup_pct }] = await Promise.all([
     repo.searchProductsForListing(search.trim()),
     getCotizacion(),
     getSellerPlan(sellerId),
-    getMlCostMarkupPct(sellerId),
   ]);
   const platformPct = getSellerPlatformPct(0);
   return rows.map(p => ({
@@ -64,7 +61,7 @@ export async function searchProductsForCalculator(sellerId, search) {
     name: p.name,
     weightGrams: Number(p.weight_grams || 0),
     volumeCm3:   Number(p.volume_cm3 || 0),
-    priceFloor:  shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, markupPct),
+    priceFloor:  shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, ml_cost_markup_pct),
   }));
 }
 
@@ -936,9 +933,9 @@ export async function updateComboQuantities(sellerId, comboId, products) {
 export async function getComboPriceFloor(sellerId, comboId) {
   const products = await repo.getComboProducts(comboId);
   if (!products.length) { const e = new Error("Combo no encontrado"); e.status = 404; throw e; }
-  const [cotizacion, { plan_id }, markupPct] = await Promise.all([getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId)]);
+  const [cotizacion, { plan_id, ml_cost_markup_pct }] = await Promise.all([getCotizacion(), getSellerPlan(sellerId)]);
   const platformPct = getSellerPlatformPct(0);
-  return products.reduce((sum, p) => sum + shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, markupPct) * p.quantity, 0);
+  return products.reduce((sum, p) => sum + shownCostWithOverride(p.costo_usd, cotizacion, platformPct, plan_id, ml_cost_markup_pct) * p.quantity, 0);
 }
 
 // Junta (sin repetir) todas las fotos de S3 que ya existen para cada producto del combo —
@@ -1066,6 +1063,18 @@ export async function republishOnCurrentAccount(sellerId, oldMlItemId) {
     throw e;
   }
 
+  // IMPORTANTE — probado en vivo: /items/:id devuelve 403 "access_denied" cuando se pide con el
+  // token de una cuenta distinta a la dueña del ítem. Una vez que el vendedor desconectó la
+  // cuenta vieja, Ventaz YA NO PUEDE leer esa publicación desde la API de Mercado Libre por
+  // ningún medio — ni para copiar su título/descripción/cuotas actuales ni para nada más. Todo
+  // lo que se puede reusar acá sale de lo que Ventaz ya tenía guardado de su propia publicación
+  // original (precio, categoría, características, envío gratis) más las fotos ACTUALES del
+  // producto en Ventaz. El título/descripción no están guardados en ml_listings — si el
+  // vendedor los había personalizado distinto del nombre/descripción del producto al publicar,
+  // esa personalización se perdió y no hay forma de recuperarla; acá se usa el nombre/
+  // descripción actual del producto (mismo default que usa cualquier publish nuevo). Las cuotas
+  // tampoco quedan guardadas — la publicación nueva sale sin campaña de cuotas, el vendedor
+  // puede reactivarlas a mano desde Ventaz como en cualquier publicación nueva.
   const shared = { price: Number(old.price), shippingFree: !!old.shipping_free, listingTypeId: "gold_special" };
 
   if (old.catalog_product_id) {
@@ -1075,6 +1084,8 @@ export async function republishOnCurrentAccount(sellerId, oldMlItemId) {
   }
 
   if (old.ml_combo_id) {
+    // Las fotos de un combo siempre salen de los productos que lo componen (nunca se eligen a
+    // mano, ver publishCombo) — al ser los mismos productos, van a coincidir solas.
     return await publishCombo(sellerId, old.ml_combo_id, {
       ...shared, mlCategoryId: old.ml_category_id, attributes: old.attributes || [],
     });
@@ -1216,13 +1227,13 @@ export async function getListings(sellerId) {
   // publicaciones) en vez de una vez por fila. costo_usd viene null para combos sin miembros
   // con costo cargado y para publicaciones huérfanas (product_id borrado) — en esos casos no
   // se puede calcular nada y quedan en null, no en 0 (0 sería un costo real, no "no disponible").
-  const [cotizacion, { plan_id }, markupPct] = await Promise.all([
-    getCotizacion(), getSellerPlan(sellerId), getMlCostMarkupPct(sellerId),
+  const [cotizacion, { plan_id, ml_cost_markup_pct }] = await Promise.all([
+    getCotizacion(), getSellerPlan(sellerId),
   ]);
   const platformPct = getSellerPlatformPct(0);
   const withCostAndProfit = withProductImages.map(l => {
     const unitCost = l.costo_usd != null
-      ? shownCostWithOverride(l.costo_usd, cotizacion, platformPct, plan_id, markupPct)
+      ? shownCostWithOverride(l.costo_usd, cotizacion, platformPct, plan_id, ml_cost_markup_pct)
       : null;
     return {
       ...l,

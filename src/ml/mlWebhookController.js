@@ -4,7 +4,7 @@ import * as svc from "./mlService.js";
 import { getValidToken } from "./mlTokenService.js";
 import * as listingSvc from "./mlListingService.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlatformPct, shownCostWithOverride } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
 import { sendMlSaleNotification, sendMlQuestionNotification, sendMlQuestionNeedsHumanNotification, sendMlClaimNotification } from "../email/buyerEmails.js";
 import { tryUseSellerStock, markItemSellerStock } from "../purchase/purchaseRepository.js";
@@ -153,9 +153,12 @@ export async function processOrder(conn, order) {
   const token = await getValidToken(conn.seller_id);
 
   const cotizacion = await getCotizacion();
-  const totalSalesArs = 0; // TODO: ver si conviene usar ventas históricas del seller para el tier de platformPct
-  const platformPct = getSellerPlatformPct(totalSalesArs);
-  const { plan_id: planId } = await getSellerPlan(conn.seller_id);
+  // Mercado Libre siempre cobra al tier base (30%), sin importar cuánto vendió el vendedor —
+  // el tramo por ventas acumuladas es un descuento exclusivo de ecommerce (tienda propia), ver
+  // mismo criterio en storeService.getGananciaContext. Lo único que puede variar por vendedor
+  // acá es el factor de plan y el override puntual de costo (ml_cost_markup_pct).
+  const platformPct = getSellerPlatformPct(0);
+  const { plan_id: planId, ml_cost_markup_pct: markupPct } = await getSellerPlan(conn.seller_id);
 
   let costTotal = 0;
   const items = [];
@@ -204,10 +207,10 @@ export async function processOrder(conn, order) {
          WHERE cp.ml_combo_id = $1`,
         [listing.ml_combo_id]
       );
-      const comboUnitCost = comboProducts.reduce((sum, cp) => sum + calcShownCost(cp.costo_usd, cotizacion, platformPct, planId) * cp.quantity, 0);
+      const comboUnitCost = comboProducts.reduce((sum, cp) => sum + shownCostWithOverride(cp.costo_usd, cotizacion, platformPct, planId, markupPct) * cp.quantity, 0);
       for (const cp of comboProducts) {
         const qty = cp.quantity * item.quantity;
-        const productUnitCost = calcShownCost(cp.costo_usd, cotizacion, platformPct, planId);
+        const productUnitCost = shownCostWithOverride(cp.costo_usd, cotizacion, platformPct, planId, markupPct);
         // Las unidades que salen de stock reservado por el vendedor (ya pagado antes, ver
         // sellerCheckoutService.reserveStockCheckout) no generan deuda de nuevo — mismo
         // criterio que ya usa purchaseService para ventas de la tienda propia.
@@ -232,7 +235,7 @@ export async function processOrder(conn, order) {
       );
       const product = rows[0];
       if (!product) continue;
-      const unitCost = calcShownCost(product.costo_usd, cotizacion, platformPct, planId);
+      const unitCost = shownCostWithOverride(product.costo_usd, cotizacion, platformPct, planId, markupPct);
       const reserveUsed = await tryUseSellerStock(conn.seller_id, product.product_id, item.quantity);
       const chargeableQty = item.quantity - reserveUsed;
       costTotal += unitCost * chargeableQty;

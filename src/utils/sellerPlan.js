@@ -15,13 +15,17 @@ export async function getSellerPlan(sellerId) {
   if (cached && cached.ts > Date.now() - 60_000) return cached.data;
 
   const { rows } = await pool.query(
-    `SELECT plan_id, plan_status, plan_period_end FROM sellers WHERE id = $1`,
+    `SELECT plan_id, plan_status, plan_period_end, ml_cost_markup_pct FROM sellers WHERE id = $1`,
     [sellerId]
   );
   const data = {
     plan_id:     rows[0]?.plan_id     || "inicial",
     plan_status: rows[0]?.plan_status || "trial",
     period_end:  rows[0]?.plan_period_end || null,
+    // Override puntual de costo de ML para cuentas específicas (ver pricing.js
+    // shownCostWithOverride) — costo + este % fijo en vez del margen por tramos normal.
+    // null = sin override, comportamiento estándar.
+    ml_cost_markup_pct: rows[0]?.ml_cost_markup_pct != null ? Number(rows[0].ml_cost_markup_pct) : null,
   };
   _cache.set(sellerId, { data, ts: Date.now() });
   return data;

@@ -4,7 +4,7 @@ import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackag
 import * as mlWalletService from "../ml/mlWalletService.js";
 import { getPlanMlGraceHours } from "../utils/sellerPlan.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlatformPct, shownCostWithOverride } from "../utils/pricing.js";
 import { getValidToken } from "../ml/mlTokenService.js";
 import * as mlSvc from "../ml/mlService.js";
 import { signKeys } from "../utils/s3Client.js";
@@ -405,7 +405,7 @@ export async function assignMlOrderItemProduct(itemId, productId) {
 
   const cotizacion = await getCotizacion();
   const platformPct = getSellerPlatformPct(0);
-  const unitCost = calcShownCost(product.costo_usd, cotizacion, platformPct, item.plan_id);
+  const unitCost = shownCostWithOverride(product.costo_usd, cotizacion, platformPct, item.plan_id, item.ml_cost_markup_pct);
 
   const result = await repo.assignMlOrderItemProduct(itemId, {
     productId, productName: product.name, unitCost, sellerId: item.seller_id,

@@ -334,7 +334,7 @@ export async function getProductForAssign(productId) {
 export async function getMlOrderItemForAssign(itemId) {
   const { rows } = await pool.query(
     `SELECT woi.id, woi.web_order_id, woi.quantity, woi.ml_item_id,
-            wo.seller_id, s.plan_id
+            wo.seller_id, s.plan_id, s.ml_cost_markup_pct
      FROM web_order_items woi
      JOIN web_orders wo ON wo.id = woi.web_order_id
      JOIN sellers s ON s.id = wo.seller_id

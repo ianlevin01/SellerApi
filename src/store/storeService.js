@@ -7,7 +7,7 @@ import * as integrationsRepository from "../integrations/integrationsRepository.
 import { signKey, signKeys }       from "../utils/s3Client.js";
 import { transporter }       from "../config/mailer.js";
 import { sendOrderReceived } from "../email/buyerEmails.js";
-import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
+import { getSellerPlatformPct, calcShownCost, shownCostWithOverride } from "../utils/pricing.js";
 import { getSellerPlan, getPlanStoreLimit }    from "../utils/sellerPlan.js";
 
 
@@ -253,9 +253,10 @@ export async function getOrders(sellerId) {
   // planId es necesario ahí: calcShownCost sin este dato cae en su default ("inicial", sin
   // descuento) y el costo queda inflado para cualquier vendedor en plan pro/max.
   let cotizacion = null;
-  const { plan_id: planId } = await getSellerPlan(sellerId);
+  const { plan_id: planId, ml_cost_markup_pct: markupPct } = await getSellerPlan(sellerId);
 
   const withGanancia = await Promise.all(orders.map(async (order) => {
+    const isMl = order.channel === "mercadolibre";
     const orderPlatformPct = getSellerPlatformPct(Number(order.total));
     let ganancia_producto  = 0;
     let costo_producto     = 0;
@@ -269,15 +270,21 @@ export async function getOrders(sellerId) {
         baseCost = Number(item.unit_cost);
       } else {
         // Fallback para órdenes sin unit_cost — hay que pasar el plan real del vendedor,
-        // calcShownCost no lo adivina solo.
+        // calcShownCost no lo adivina solo. Para ML se respeta el override puntual de costo de
+        // la cuenta (ml_cost_markup_pct) si tiene uno — mismo criterio que el cobro real que
+        // hace el webhook y que getPriceFloor.
         if (cotizacion === null) cotizacion = await storeRepository.getCotizacion();
         const costUsd = await storeRepository.getCostUsdForProduct(item.product_id);
-        baseCost = calcShownCost(costUsd, cotizacion, 30, planId);
+        baseCost = isMl
+          ? shownCostWithOverride(costUsd, cotizacion, 30, planId, markupPct)
+          : calcShownCost(costUsd, cotizacion, 30, planId);
       }
 
-      // adjustedCost = baseCost × (1 + platformPct/100) / 1.30
-      // baseCost fue calculado con tier 30%; ajustamos al tier real del pedido
-      const adjustedCost = baseCost * (1 + orderPlatformPct / 100) / 1.30;
+      // adjustedCost = baseCost × (1 + platformPct/100) / 1.30 — el tramo de comisión por ventas
+      // acumuladas es un descuento exclusivo de ecommerce (tienda propia); Mercado Libre siempre
+      // cobra al tier base (30%), así que para ML se deja baseCost tal cual, igual que el cobro
+      // real que ya hizo el webhook (mismo criterio en mlWebhookController.processOrder).
+      const adjustedCost = isMl ? baseCost : baseCost * (1 + orderPlatformPct / 100) / 1.30;
       costo_producto += adjustedCost * item.quantity;
       const diferencia = Number(item.unit_price) - adjustedCost;
       if (diferencia > 0) ganancia_producto += diferencia * item.quantity;
