@@ -426,7 +426,7 @@ export async function processQuestion(sellerId, q) {
 
   const token = await getValidToken(sellerId);
   if (!token) return; // se guardó igual — se puede responder a mano desde "Chats"
-  await tryAutoAnswer({ sellerId, token, questionRowId: inserted.id, mlQuestionId: String(q.id), mlItemId, productId, buyerMlUserId, questionText: q.text || "" });
+  await tryAutoAnswer({ sellerId, token, questionRowId: inserted.id, mlQuestionId: String(q.id), mlItemId, productId, questionText: q.text || "" });
 }
 
 // "Nombre: Valor" por línea, una por atributo con valor real cargado — mismo formato simple que
@@ -442,10 +442,16 @@ function formatMlAttributes(attributes) {
 
 // Separado de handleQuestion para que se pueda ejercitar solo (o reintentar a mano desde un
 // script) sin depender de un webhook real de ML.
-async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlItemId, productId, buyerMlUserId, questionText }) {
+//
+// A propósito NO mira si este mismo comprador tiene otra pregunta pendiente de humano en esta
+// publicación: en la API real de Mercado Libre cada pregunta es una unidad de pregunta/respuesta
+// independiente, no una conversación — no existe tal cosa como "un chat a medias". Que Ventaz
+// agrupe varias preguntas del mismo comprador+publicación en un mismo "chat" es solo una forma
+// de mostrarlo más cómodo en la pantalla de Chats; el bot tiene que procesar cada pregunta nueva
+// por su cuenta, sin que una pregunta anterior sin resolver la bloquee.
+async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlItemId, productId, questionText }) {
   const settings = await questionsRepo.getSettings(sellerId);
   if (!settings.enabled) return;
-  if (await questionsRepo.hasOpenHumanThread(sellerId, mlItemId, buyerMlUserId)) return; // este comprador ya tiene otra pregunta esperando un humano en esta publicación
 
   const { rows } = await pool.query(
     `SELECT p.name, p.description, p.admin_info, c.name AS category

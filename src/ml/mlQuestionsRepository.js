@@ -45,20 +45,6 @@ export async function getQuestionByMlId(mlQuestionId) {
   return rows[0] || null;
 }
 
-// Hilo abierto = el mismo comprador tiene otra pregunta sobre la misma publicación esperando un
-// humano (needs_human=true, todavía sin responder) — mientras exista, las preguntas NUEVAS de
-// ese comprador en esa publicación tampoco se contestan solas (ver mlWebhookController).
-export async function hasOpenHumanThread(sellerId, mlItemId, buyerMlUserId) {
-  const { rows } = await pool.query(
-    `SELECT 1 FROM ml_questions
-     WHERE seller_id = $1 AND ml_item_id = $2 AND buyer_ml_user_id = $3
-       AND needs_human = true AND answered_by != 'human'
-     LIMIT 1`,
-    [sellerId, mlItemId, buyerMlUserId]
-  );
-  return !!rows[0];
-}
-
 export async function markAnswered(id, { answerText, answeredBy, needsHuman }) {
   await pool.query(
     `UPDATE ml_questions SET answer_text = $2, answered_by = $3, needs_human = $4, answered_at = now() WHERE id = $1`,
