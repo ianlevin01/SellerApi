@@ -493,21 +493,33 @@ async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlI
   // distinto después, ni a mano ni desde "Chats"). La pregunta queda abierta de verdad en ML,
   // solo se avisa al vendedor para que la responda él.
   if (!canAnswer) {
-    await questionsRepo.markAnswered(questionRowId, { answerText: null, answeredBy: "pending", needsHuman: true });
-    const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId]).then(r => r.rows[0]?.email);
-    if (sellerEmail) {
-      sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle: mlItemId, questionText }).catch(() => {});
-    }
+    await escalateToHuman({ sellerId, questionRowId, mlItemId, questionText });
     return;
   }
 
-  await svc.answerQuestion(token, mlQuestionId, answer).catch(err => {
+  // Si falló el POST a ML (timeout, 5xx, lo que sea — confirmado en vivo que puede pasar aunque
+  // la IA sí haya podido responder), antes esto dejaba la pregunta en un limbo invisible: nunca
+  // se marcaba como "necesita humano" ni se avisaba nada, así que ni el vendedor ni Ventaz se
+  // enteraban de que había algo pendiente — solo se podía notar mirando Mercado Libre directo.
+  // Ahora un posteo fallido escala igual que "la IA no pudo responder": se avisa al vendedor
+  // para que la responda él, en vez de perderse en silencio.
+  const result = await svc.answerQuestion(token, mlQuestionId, answer).catch(err => {
     console.error("[ml-questions] no se pudo postear la respuesta en ML:", err.message);
     return null;
-  }).then(async result => {
-    if (result === null) return; // falló el posteo — se deja la pregunta como estaba, se puede reintentar a mano desde "Chats"
-    await questionsRepo.markAnswered(questionRowId, { answerText: answer, answeredBy: "ai", needsHuman: false });
   });
+  if (result === null) {
+    await escalateToHuman({ sellerId, questionRowId, mlItemId, questionText });
+    return;
+  }
+  await questionsRepo.markAnswered(questionRowId, { answerText: answer, answeredBy: "ai", needsHuman: false });
+}
+
+async function escalateToHuman({ sellerId, questionRowId, mlItemId, questionText }) {
+  await questionsRepo.markAnswered(questionRowId, { answerText: null, answeredBy: "pending", needsHuman: true });
+  const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId]).then(r => r.rows[0]?.email);
+  if (sellerEmail) {
+    sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle: mlItemId, questionText }).catch(() => {});
+  }
 }
 
 async function handleClaim(conn) {
