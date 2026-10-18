@@ -247,7 +247,7 @@ export async function getMonthlyFinanceBreakdown(sellerId, monthsBack = 12) {
   const { rows: feeRows } = await pool.query(
     `SELECT
        date_trunc('month', wo.created_at AT TIME ZONE '${ART}')::date::text AS month_start,
-       COALESCE(SUM(woi.ml_sale_fee), 0)::numeric AS ml_commission
+       COALESCE(SUM(woi.ml_sale_fee * woi.quantity), 0)::numeric AS ml_commission
      FROM web_order_items woi
      JOIN web_orders wo ON wo.id = woi.web_order_id
      WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
@@ -281,7 +281,7 @@ export async function getFinanceBreakdownForRange(sellerId, from, to) {
     [sellerId, CONFIRMED, from, to]
   );
   const { rows: feeRows } = await pool.query(
-    `SELECT COALESCE(SUM(woi.ml_sale_fee), 0)::numeric AS ml_commission
+    `SELECT COALESCE(SUM(woi.ml_sale_fee * woi.quantity), 0)::numeric AS ml_commission
      FROM web_order_items woi
      JOIN web_orders wo ON wo.id = woi.web_order_id
      WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
