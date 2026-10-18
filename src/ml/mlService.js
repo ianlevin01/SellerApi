@@ -568,3 +568,48 @@ export async function getShipmentLabelsPdf(token, shipmentIds) {
   const arrayBuffer = await res.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
+
+// ── Advertising API (Product Ads) — confirmado con el equipo de developers de ML (28/9): hay
+// endpoints activos, pero el acceso depende de que la cuenta tenga el producto "Product Ads"
+// habilitado. Si no lo tiene, este endpoint responde con un error del tipo "No permissions
+// found for user_id" — eso NO es un fallo de Ventaz, es la señal real de "esta cuenta no tiene
+// Publicidad habilitada" (financeService lo trata como "no disponible", nunca como error duro).
+export async function getAdvertisers(token) {
+  return apiGet(`/advertising/advertisers?product_id=PADS`, token);
+}
+
+// Gasto de Product Ads de un advertiser en un rango de fechas — confirmado en vivo (7/10):
+// pese a metrics_summary=true, la respuesta sigue viniendo desglosada por campaña
+// (results[].metrics.cost), no como un único total — hay que sumarlas acá.
+export async function getProductAdsCost(token, siteId, advertiserId, dateFrom, dateTo, offset = 0) {
+  const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, metrics: "cost", metrics_summary: "true", offset, limit: 50 });
+  return apiGet(`/advertising/${siteId}/advertisers/${advertiserId}/product_ads/campaigns/search?${params}`, token);
+}
+
+// Total de gasto en publicidad de TODAS las campañas de un advertiser en un rango de fechas —
+// pagina si hace falta (confirmado en vivo con 6 campañas en una sola página, pero una cuenta
+// con más de 50 campañas activas necesitaría más de una).
+export async function getProductAdsCostTotal(token, siteId, advertiserId, dateFrom, dateTo) {
+  let total = 0, offset = 0;
+  for (;;) {
+    const page = await getProductAdsCost(token, siteId, advertiserId, dateFrom, dateTo, offset);
+    for (const campaign of page.results || []) total += Number(campaign.metrics?.cost || 0);
+    const { offset: pageOffset = 0, limit = 50, total: pagingTotal = 0 } = page.paging || {};
+    offset = pageOffset + limit;
+    if (offset >= pagingTotal) break;
+  }
+  return total;
+}
+
+// ── Billing API — resumen mensual consolidado de todo lo que ML le cobra al vendedor
+// (comisiones, envíos, publicidad, impuestos), confirmado con el equipo de developers de ML
+// (28/9). group: 'ML' (cargos de Mercado Libre) | 'MP' (Mercado Pago).
+export async function getBillingPeriods(token, group = "ML", documentType = "BILL") {
+  const params = new URLSearchParams({ group, document_type: documentType });
+  return apiGet(`/billing/integration/monthly/periods?${params}`, token);
+}
+
+export async function getBillingPeriodSummary(token, periodKey, group = "ML") {
+  const params = new URLSearchParams({ group });
+  return apiGet(`/billing/integration/periods/key/${periodKey}/summary/details?${params}`, token);
+}

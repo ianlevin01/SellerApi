@@ -1302,6 +1302,33 @@ export async function sendMlQuestionNotification(sellerEmail, { itemTitle, quest
   }
 }
 
+// Se manda cada vez que el bot de IA NO pudo responder una pregunta sola y la dejó esperando
+// una respuesta humana (ver mlWebhookController.tryAutoAnswer) — distinto de
+// sendMlQuestionNotification (que avisa de CUALQUIER pregunta nueva, la pueda contestar el bot
+// o no): este mail es específicamente "hay algo que requiere que vos actúes", así que lleva
+// directo al tab de Chats en vez de a Mercado Libre.
+export async function sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle, questionText }) {
+  const PANEL_URL = process.env.SELLER_APP_URL || "https://ventaz.com.ar";
+  const html = baseLayout(`
+    <h2 style="margin:0 0 12px;font-size:20px;color:#d97706">Tenés un mensaje pendiente de contestar</h2>
+    <p style="margin:0 0 6px;font-size:14px;color:#374151"><strong>${itemTitle || "Tu publicación"}</strong></p>
+    <p style="margin:0 0 16px;font-size:14px;color:#6b7280;font-style:italic">"${questionText}"</p>
+    <p style="margin:0 0 16px;font-size:14px;color:#374151">
+      La IA no tenía información suficiente para responder esta pregunta sola, así que le avisamos al comprador que le contestás pronto — pero todavía necesita tu respuesta real.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="${PANEL_URL}/mercado-libre?tab=chats" style="display:inline-block;background:#d97706;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 28px;border-radius:9px">
+        Responder ahora →
+      </a>
+    </td></tr></table>
+  `);
+  try {
+    await transporter.sendMail({ from: FROM, to: sellerEmail, subject: "⏳ Tenés un mensaje pendiente de contestar", html });
+  } catch (err) {
+    console.error("[email] sendMlQuestionNeedsHumanNotification error:", err.message);
+  }
+}
+
 export async function sendMlClaimNotification(sellerEmail, { itemTitle, claimReason }) {
   const html = baseLayout(`
     <h2 style="margin:0 0 12px;font-size:20px;color:#dc2626">Reclamo en Mercado Libre</h2>

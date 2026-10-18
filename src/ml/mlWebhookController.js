@@ -6,7 +6,7 @@ import * as listingSvc from "./mlListingService.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
 import { getSellerPlatformPct, calcShownCost } from "../utils/pricing.js";
 import { getSellerPlan } from "../utils/sellerPlan.js";
-import { sendMlSaleNotification, sendMlQuestionNotification, sendMlClaimNotification } from "../email/buyerEmails.js";
+import { sendMlSaleNotification, sendMlQuestionNotification, sendMlQuestionNeedsHumanNotification, sendMlClaimNotification } from "../email/buyerEmails.js";
 import { tryUseSellerStock, markItemSellerStock } from "../purchase/purchaseRepository.js";
 import * as questionsRepo from "./mlQuestionsRepository.js";
 import { answerBuyerQuestion } from "../products/productAiService.js";
@@ -461,6 +461,16 @@ async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlI
     await questionsRepo.markAnswered(questionRowId, {
       answerText: textToPost, answeredBy: canAnswer ? "ai" : "pending", needsHuman: !canAnswer,
     });
+
+    // La IA no pudo responder sola — un mail aparte por CADA pregunta que queda así (distinto
+    // del aviso de "nueva pregunta" que ya se mandó al llegar): ese es un FYI, este es "tenés
+    // que actuar vos".
+    if (!canAnswer) {
+      const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId]).then(r => r.rows[0]?.email);
+      if (sellerEmail) {
+        sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle: mlItemId, questionText }).catch(() => {});
+      }
+    }
   });
 }
 

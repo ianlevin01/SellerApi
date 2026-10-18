@@ -223,3 +223,76 @@ export async function setMonthlyGoal(sellerId, monthKey, revenueGoal) {
     [sellerId, monthKey, revenueGoal]
   );
 }
+
+// Datos reales de venta agregados por mes — base de la sección "Rentabilidad" (ver
+// src/finance/). revenue/product_cost/shipping_cost salen de web_orders (a nivel de pedido, sin
+// join a items para no duplicar wo.total), ml_commission sale de web_order_items.ml_sale_fee
+// (comisión real de ML por ítem) en una consulta aparte por el mismo motivo que getKpis separa
+// unitRows del resto. Todos estos valores vienen directo de la API de ML al momento de la venta
+// (ver mlWebhookController.processOrder) — nada acá es estimado.
+export async function getMonthlyFinanceBreakdown(sellerId, monthsBack = 12) {
+  const { rows: orderRows } = await pool.query(
+    `SELECT
+       date_trunc('month', wo.created_at AT TIME ZONE '${ART}')::date::text AS month_start,
+       COALESCE(SUM(wo.total), 0)::numeric AS revenue,
+       COALESCE(SUM(wo.ml_cost_amount), 0)::numeric AS product_cost,
+       COALESCE(SUM(wo.ml_shipping_cost), 0)::numeric AS shipping_cost
+     FROM web_orders wo
+     WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
+       AND wo.created_at >= (now() - ($3 || ' months')::interval)
+     GROUP BY month_start`,
+    [sellerId, CONFIRMED, monthsBack]
+  );
+
+  const { rows: feeRows } = await pool.query(
+    `SELECT
+       date_trunc('month', wo.created_at AT TIME ZONE '${ART}')::date::text AS month_start,
+       COALESCE(SUM(woi.ml_sale_fee), 0)::numeric AS ml_commission
+     FROM web_order_items woi
+     JOIN web_orders wo ON wo.id = woi.web_order_id
+     WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
+       AND wo.created_at >= (now() - ($3 || ' months')::interval)
+     GROUP BY month_start`,
+    [sellerId, CONFIRMED, monthsBack]
+  );
+  const feesByMonth = new Map(feeRows.map(r => [r.month_start, Number(r.ml_commission)]));
+
+  return orderRows.map(r => ({
+    monthKey:     r.month_start.slice(0, 7), // 'YYYY-MM'
+    revenue:      Number(r.revenue),
+    productCost:  Number(r.product_cost),
+    shippingCost: Number(r.shipping_cost),
+    mlCommission: feesByMonth.get(r.month_start) || 0,
+  }));
+}
+
+// Mismos 4 datos reales que getMonthlyFinanceBreakdown, pero para un rango de fechas arbitrario
+// (sin agrupar por mes) — usado por el selector "Por rango" de Rentabilidad. from/to son fechas
+// calendario en zona ART ('YYYY-MM-DD'), mismo criterio que mlStatsRepository.getKpis.
+export async function getFinanceBreakdownForRange(sellerId, from, to) {
+  const { rows: orderRows } = await pool.query(
+    `SELECT
+       COALESCE(SUM(wo.total), 0)::numeric AS revenue,
+       COALESCE(SUM(wo.ml_cost_amount), 0)::numeric AS product_cost,
+       COALESCE(SUM(wo.ml_shipping_cost), 0)::numeric AS shipping_cost
+     FROM web_orders wo
+     WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
+       AND (wo.created_at AT TIME ZONE '${ART}')::date BETWEEN $3 AND $4`,
+    [sellerId, CONFIRMED, from, to]
+  );
+  const { rows: feeRows } = await pool.query(
+    `SELECT COALESCE(SUM(woi.ml_sale_fee), 0)::numeric AS ml_commission
+     FROM web_order_items woi
+     JOIN web_orders wo ON wo.id = woi.web_order_id
+     WHERE wo.seller_id = $1 AND wo.channel = 'mercadolibre' AND wo.color = ANY($2)
+       AND (wo.created_at AT TIME ZONE '${ART}')::date BETWEEN $3 AND $4`,
+    [sellerId, CONFIRMED, from, to]
+  );
+  const r = orderRows[0];
+  return {
+    revenue:      Number(r.revenue),
+    productCost:  Number(r.product_cost),
+    shippingCost: Number(r.shipping_cost),
+    mlCommission: Number(feeRows[0].ml_commission),
+  };
+}

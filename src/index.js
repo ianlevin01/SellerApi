@@ -22,6 +22,7 @@ import academyRoutes      from "./academy/academyRoutes.js";
 import adsRoutes          from "./ads/adsRoutes.js";
 import metaRoutes         from "./meta/metaRoutes.js";
 import mlRoutes           from "./ml/mlRoutes.js";
+import financeRoutes      from "./finance/financeRoutes.js";
 import { startStockListener }       from "./stock/stockListener.js";
 import { startCampaignScheduler }   from "./email/campaignService.js";
 import { startShippingTracker }     from "./jobs/shippingTracker.js";
@@ -92,6 +93,7 @@ app.use("/academy",               academyRoutes);
 app.use("/seller/ads",            adsRoutes);
 app.use("/seller/meta",           metaRoutes);
 app.use("/seller/ml",             mlRoutes);
+app.use("/seller/finance",        financeRoutes);
 
 app.use("/admin/auth",             adminAuthRoutes);
 app.use("/admin",                  adminRoutes);
