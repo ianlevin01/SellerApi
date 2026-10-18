@@ -188,14 +188,20 @@ Devolvé SOLO el texto reescrito, sin explicaciones.`,
 // 13/10) — se trunca acá mismo como red de seguridad, además de pedírselo en el prompt.
 const ML_ANSWER_MAX_CHARS = 2000;
 
-export async function answerBuyerQuestion({ questionText, product, businessRules, productInfoInstructions }) {
+export async function answerBuyerQuestion({ questionText, product, mlListing, businessRules, productInfoInstructions }) {
   const ai = getClient();
 
   const productBlock = [
-    `Nombre: ${product.name}`,
-    product.description ? `Descripción: ${product.description}` : null,
+    `Nombre (catálogo interno): ${product.name}`,
+    product.description ? `Descripción (catálogo interno): ${product.description}` : null,
     product.adminInfo   ? `Características (medidas, color, material, etc.): ${product.adminInfo}` : null,
     product.category    ? `Categoría: ${product.category}` : null,
+    // Datos reales de la publicación EN Mercado Libre — pueden tener detalle que el catálogo
+    // interno no carga (título real, descripción completa publicada, ficha técnica/atributos
+    // tal cual la ve el comprador en la publicación).
+    mlListing?.title       ? `Título de la publicación en ML: ${mlListing.title}` : null,
+    mlListing?.description ? `Descripción completa de la publicación en ML: ${mlListing.description}` : null,
+    mlListing?.attributes  ? `Ficha técnica de la publicación en ML:\n${mlListing.attributes}` : null,
   ].filter(Boolean).join("\n");
 
   const res = await ai.chat.completions.create({

@@ -429,6 +429,17 @@ export async function processQuestion(sellerId, q) {
   await tryAutoAnswer({ sellerId, token, questionRowId: inserted.id, mlQuestionId: String(q.id), mlItemId, productId, buyerMlUserId, questionText: q.text || "" });
 }
 
+// "Nombre: Valor" por línea, una por atributo con valor real cargado — mismo formato simple que
+// ya usa el resto del código para mandarle texto a la IA. Ignora los que no tienen value_name
+// (atributo declarado pero sin cargar) para no meterle ruido vacío al prompt.
+function formatMlAttributes(attributes) {
+  if (!attributes?.length) return null;
+  const lines = attributes
+    .filter(a => a.value_name)
+    .map(a => `${a.name}: ${a.value_name}`);
+  return lines.length ? lines.join("\n") : null;
+}
+
 // Separado de handleQuestion para que se pueda ejercitar solo (o reintentar a mano desde un
 // script) sin depender de un webhook real de ML.
 async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlItemId, productId, buyerMlUserId, questionText }) {
@@ -445,9 +456,24 @@ async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlI
   const product = rows[0];
   if (!product) return;
 
+  // Datos reales de la publicación EN Mercado Libre (título, descripción completa, ficha
+  // técnica) — a propósito ADEMÁS del producto interno de Ventaz, no en su reemplazo: el
+  // vendedor puede haber cargado más detalle en uno que en el otro. Si falla (p. ej. la
+  // publicación se borró), seguimos solo con los datos internos en vez de abortar la respuesta.
+  const [mlItem, mlDescription] = await Promise.all([
+    svc.getItem(token, mlItemId).catch(() => null),
+    svc.getItemDescription(token, mlItemId).catch(() => null),
+  ]);
+  const mlListing = {
+    title: mlItem?.title || null,
+    description: mlDescription?.plain_text || null,
+    attributes: formatMlAttributes(mlItem?.attributes),
+  };
+
   const { canAnswer, answer } = await answerBuyerQuestion({
     questionText,
     product: { name: product.name, description: product.description, adminInfo: product.admin_info, category: product.category },
+    mlListing,
     businessRules: settings.business_rules,
     productInfoInstructions: settings.product_info_instructions,
   }).catch(err => {
@@ -455,25 +481,26 @@ async function tryAutoAnswer({ sellerId, token, questionRowId, mlQuestionId, mlI
     return { canAnswer: false, answer: null };
   });
 
-  const textToPost = canAnswer ? answer : "Te responderemos tu duda lo más pronto posible.";
-  await svc.answerQuestion(token, mlQuestionId, textToPost).catch(err => {
+  // Si la IA no puede responder, a propósito NO se postea nada en Mercado Libre — una pregunta
+  // de ML solo admite UNA respuesta para siempre, así que publicar un texto de relleno acá
+  // quemaría la única oportunidad real de contestarla (el vendedor ya no podría responder nada
+  // distinto después, ni a mano ni desde "Chats"). La pregunta queda abierta de verdad en ML,
+  // solo se avisa al vendedor para que la responda él.
+  if (!canAnswer) {
+    await questionsRepo.markAnswered(questionRowId, { answerText: null, answeredBy: "pending", needsHuman: true });
+    const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId]).then(r => r.rows[0]?.email);
+    if (sellerEmail) {
+      sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle: mlItemId, questionText }).catch(() => {});
+    }
+    return;
+  }
+
+  await svc.answerQuestion(token, mlQuestionId, answer).catch(err => {
     console.error("[ml-questions] no se pudo postear la respuesta en ML:", err.message);
     return null;
   }).then(async result => {
     if (result === null) return; // falló el posteo — se deja la pregunta como estaba, se puede reintentar a mano desde "Chats"
-    await questionsRepo.markAnswered(questionRowId, {
-      answerText: textToPost, answeredBy: canAnswer ? "ai" : "pending", needsHuman: !canAnswer,
-    });
-
-    // La IA no pudo responder sola — un mail aparte por CADA pregunta que queda así (distinto
-    // del aviso de "nueva pregunta" que ya se mandó al llegar): ese es un FYI, este es "tenés
-    // que actuar vos".
-    if (!canAnswer) {
-      const sellerEmail = await pool.query(`SELECT email FROM sellers WHERE id = $1`, [sellerId]).then(r => r.rows[0]?.email);
-      if (sellerEmail) {
-        sendMlQuestionNeedsHumanNotification(sellerEmail, { itemTitle: mlItemId, questionText }).catch(() => {});
-      }
-    }
+    await questionsRepo.markAnswered(questionRowId, { answerText: answer, answeredBy: "ai", needsHuman: false });
   });
 }
 
