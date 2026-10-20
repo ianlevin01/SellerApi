@@ -2,7 +2,8 @@ import * as repo from "./adminRepository.js";
 import { getAnalyticsAdmin } from "../store/analyticsRepository.js";
 import { notifySellerCvuVerified, notifySellerPayoutTransferred, sendOrderPackaged, sendOrderPackagedToSeller, sendOrderShipped, sendOrderShippedToSeller } from "../email/buyerEmails.js";
 import * as mlWalletService from "../ml/mlWalletService.js";
-import { getPlanMlGraceHours } from "../utils/sellerPlan.js";
+import { getPlanMlGraceHours, invalidatePlanCache } from "../utils/sellerPlan.js";
+import * as subscriptionRepository from "../subscriptions/subscriptionRepository.js";
 import { getCotizacion } from "../payouts/payoutsRepository.js";
 import { getSellerPlatformPct, shownCostWithOverride } from "../utils/pricing.js";
 import { getValidToken } from "../ml/mlTokenService.js";
@@ -43,6 +44,31 @@ export async function blockSeller(id, block) {
   const seller = await repo.blockSeller(id, !block);
   if (!seller) throw { status: 404, message: "Vendedor no encontrado" };
   return seller;
+}
+
+const ASSIGNABLE_PLANS = ["inicial", "pro", "max"];
+
+// Asignación manual de plan desde AdminPanel (soporte, cortesías, acuerdos puntuales) — a
+// diferencia del flujo normal (el vendedor paga con MercadoPago y subscriptionService lo
+// activa), acá no hay cobro de por medio: se activa directo por un año y se limpia cualquier
+// downgrade pendiente que tuviera encolado, para que el plan asignado quede sin ambigüedad.
+export async function assignSellerPlan(sellerId, planId) {
+  if (!ASSIGNABLE_PLANS.includes(planId)) {
+    throw { status: 400, message: `Plan inválido: ${planId}` };
+  }
+  const planPeriodEnd = new Date();
+  planPeriodEnd.setFullYear(planPeriodEnd.getFullYear() + 1);
+
+  const updated = await subscriptionRepository.updateSellerSubscription(sellerId, {
+    plan_id: planId,
+    plan_status: "active",
+    plan_period_end: planPeriodEnd.toISOString(),
+    clear_pending: true,
+  });
+  if (!updated) throw { status: 404, message: "Vendedor no encontrado" };
+
+  invalidatePlanCache(sellerId);
+  return { message: `Plan ${planId} asignado por un año`, ...updated };
 }
 
 export async function verifyCvu(id, verified) {

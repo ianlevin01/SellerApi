@@ -27,6 +27,7 @@ router.patch("/sellers/:id/block", h(req => svc.blockSeller(req.params.id, true)
 router.patch("/sellers/:id/unblock", h(req => svc.blockSeller(req.params.id, false)));
 router.patch("/sellers/:id/cvu/verify", h(req => svc.verifyCvu(req.params.id, true)));
 router.patch("/sellers/:id/cvu/reject", h(req => svc.verifyCvu(req.params.id, false)));
+router.patch("/sellers/:id/plan",      h(req => svc.assignSellerPlan(req.params.id, req.body?.planId)));
 
 router.post("/sellers/:id/impersonate", async (req, res) => {
   try {
