@@ -74,31 +74,40 @@ async function checkStock() {
       const isExpensive = precio1 > 100000;
       const available   = Number(l.available_stock);
       const outOfStock  = isExpensive ? available <= 0 : available < 10;
+      // Independiente del stock: el producto puede estar desactivado en la base (decisión de
+      // catálogo, nada que ver con cantidades) — si ya está publicada en ML, hay que pausarla
+      // igual. Tiene prioridad sobre el motivo "stock": no tiene sentido reactivar por stock
+      // una publicación cuyo producto sigue inactivo.
+      const inactive = l.product_active === false;
 
-      // Pausado automático por falta de stock DESACTIVADO a propósito (pedido explícito) —
-      // queda el código armado para reactivarlo más adelante, por ahora no pausa nada.
-      // if (outOfStock && l.status === "active") {
-      //   await listingSvc.pauseListing(l.seller_id, l.ml_item_id, "stock");
-      //   await sendMlStockEmail({
-      //     sellerEmail: l.seller_email, sellerName: l.seller_name,
-      //     productName: l.product_name, productCode: l.product_code || l.product_id,
-      //     permalink: l.permalink, mlItemId: l.ml_item_id, kind: "paused",
-      //   });
-      //   console.log(`[mlStockSync] pausado ${l.ml_item_id} — stock efectivo ${available}`);
-      // } else
-      if (!outOfStock && l.status === "paused" && l.pause_reason === "stock") {
+      if (l.status === "active") {
+        if (inactive) {
+          await listingSvc.pauseListing(l.seller_id, l.ml_item_id, "inactive");
+          console.log(`[mlStockSync] pausado ${l.ml_item_id} — producto desactivado`);
+        } else if (outOfStock) {
+          await listingSvc.pauseListing(l.seller_id, l.ml_item_id, "stock");
+          await sendMlStockEmail({
+            sellerEmail: l.seller_email, sellerName: l.seller_name,
+            productName: l.product_name, productCode: l.product_code || l.product_id,
+            permalink: l.permalink, mlItemId: l.ml_item_id, kind: "paused",
+          });
+          console.log(`[mlStockSync] pausado ${l.ml_item_id} — stock efectivo ${available}`);
+        } else {
+          // Sigue activa y con stock suficiente — sincronizamos la cantidad exacta para que
+          // ML no muestre más unidades de las que realmente quedan disponibles.
+          await listingSvc.syncStockToMl(l.seller_id, l.ml_item_id, available);
+        }
+      } else if (l.status === "paused" && (l.pause_reason === "stock" || l.pause_reason === "inactive") && !inactive && !outOfStock) {
         await listingSvc.reactivateListing(l.seller_id, l.ml_item_id);
         await listingSvc.syncStockToMl(l.seller_id, l.ml_item_id, available);
-        await sendMlStockEmail({
-          sellerEmail: l.seller_email, sellerName: l.seller_name,
-          productName: l.product_name, productCode: l.product_code || l.product_id,
-          permalink: l.permalink, mlItemId: l.ml_item_id, kind: "reactivated",
-        });
-        console.log(`[mlStockSync] reactivado ${l.ml_item_id} — stock repuesto (${available})`);
-      } else if (l.status === "active") {
-        // Sigue activa y con stock suficiente — sincronizamos la cantidad exacta para que
-        // ML no muestre más unidades de las que realmente quedan disponibles.
-        await listingSvc.syncStockToMl(l.seller_id, l.ml_item_id, available);
+        if (l.pause_reason === "stock") {
+          await sendMlStockEmail({
+            sellerEmail: l.seller_email, sellerName: l.seller_name,
+            productName: l.product_name, productCode: l.product_code || l.product_id,
+            permalink: l.permalink, mlItemId: l.ml_item_id, kind: "reactivated",
+          });
+        }
+        console.log(`[mlStockSync] reactivado ${l.ml_item_id} (motivo previo: ${l.pause_reason})`);
       }
     } catch (err) {
       console.error(`[mlStockSync] error procesando ${l.ml_item_id}:`, err.message);
@@ -131,29 +140,36 @@ async function checkComboStock() {
       );
       const isExpensive = comboPrecio1 > 100000;
       const outOfStock  = isExpensive ? available <= 0 : available < 10;
+      // Mismo criterio que checkStock(): un combo queda "inactivo" si alguno de los productos
+      // que lo componen se desactivó en el catálogo, sin importar el stock.
+      const inactive = c.product_active === false;
 
-      // Pausado automático por falta de stock DESACTIVADO a propósito (pedido explícito) —
-      // queda el código armado para reactivarlo más adelante, por ahora no pausa nada.
-      // if (outOfStock && c.status === "active") {
-      //   await listingSvc.pauseListing(c.seller_id, c.ml_item_id, "stock");
-      //   await sendMlStockEmail({
-      //     sellerEmail: c.seller_email, sellerName: c.seller_name,
-      //     productName: c.combo_name, productCode: null,
-      //     permalink: c.permalink, mlItemId: c.ml_item_id, kind: "paused",
-      //   });
-      //   console.log(`[mlStockSync] combo pausado ${c.ml_item_id} — stock efectivo ${available}`);
-      // } else
-      if (!outOfStock && c.status === "paused" && c.pause_reason === "stock") {
+      if (c.status === "active") {
+        if (inactive) {
+          await listingSvc.pauseListing(c.seller_id, c.ml_item_id, "inactive");
+          console.log(`[mlStockSync] combo pausado ${c.ml_item_id} — producto desactivado`);
+        } else if (outOfStock) {
+          await listingSvc.pauseListing(c.seller_id, c.ml_item_id, "stock");
+          await sendMlStockEmail({
+            sellerEmail: c.seller_email, sellerName: c.seller_name,
+            productName: c.combo_name, productCode: null,
+            permalink: c.permalink, mlItemId: c.ml_item_id, kind: "paused",
+          });
+          console.log(`[mlStockSync] combo pausado ${c.ml_item_id} — stock efectivo ${available}`);
+        } else {
+          await listingSvc.syncStockToMl(c.seller_id, c.ml_item_id, available);
+        }
+      } else if (c.status === "paused" && (c.pause_reason === "stock" || c.pause_reason === "inactive") && !inactive && !outOfStock) {
         await listingSvc.reactivateListing(c.seller_id, c.ml_item_id);
         await listingSvc.syncStockToMl(c.seller_id, c.ml_item_id, available);
-        await sendMlStockEmail({
-          sellerEmail: c.seller_email, sellerName: c.seller_name,
-          productName: c.combo_name, productCode: null,
-          permalink: c.permalink, mlItemId: c.ml_item_id, kind: "reactivated",
-        });
-        console.log(`[mlStockSync] combo reactivado ${c.ml_item_id} — stock repuesto (${available})`);
-      } else if (c.status === "active") {
-        await listingSvc.syncStockToMl(c.seller_id, c.ml_item_id, available);
+        if (c.pause_reason === "stock") {
+          await sendMlStockEmail({
+            sellerEmail: c.seller_email, sellerName: c.seller_name,
+            productName: c.combo_name, productCode: null,
+            permalink: c.permalink, mlItemId: c.ml_item_id, kind: "reactivated",
+          });
+        }
+        console.log(`[mlStockSync] combo reactivado ${c.ml_item_id} (motivo previo: ${c.pause_reason})`);
       }
     } catch (err) {
       console.error(`[mlStockSync] error procesando combo ${c.ml_item_id}:`, err.message);

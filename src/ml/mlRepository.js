@@ -1,5 +1,7 @@
 import pool from "../database/db.js";
 
+const ART = "America/Argentina/Buenos_Aires";
+
 export async function createOAuthState(sellerId) {
   const { rows } = await pool.query(
     `INSERT INTO ml_oauth_states (seller_id) VALUES ($1) RETURNING state`,
@@ -323,7 +325,7 @@ export async function reactivateListingsAfterChargeSuccess(sellerId) {
 export async function getActiveListingsWithStock() {
   const { rows } = await pool.query(
     `SELECT l.seller_id, l.ml_item_id, l.product_id, l.status, l.pause_reason, l.permalink,
-            p.name AS product_name, p.code AS product_code, p.costo_usd,
+            p.name AS product_name, p.code AS product_code, p.costo_usd, p.active AS product_active,
             s.email AS seller_email, s.name AS seller_name,
             COALESCE((SELECT ssr.quantity FROM seller_stock_reserves ssr
                       WHERE ssr.seller_id = l.seller_id AND ssr.product_id = l.product_id), 0) AS seller_own_reserve,
@@ -355,6 +357,11 @@ export async function getActiveComboListings() {
     `SELECT l.seller_id, l.ml_item_id, l.ml_combo_id, l.status, l.pause_reason, l.permalink,
             c.name AS combo_name,
             s.email AS seller_email, s.name AS seller_name,
+            NOT EXISTS (
+              SELECT 1 FROM ml_combo_products mcp
+              JOIN products p2 ON p2.id = mcp.product_id
+              WHERE mcp.ml_combo_id = c.id AND p2.active = false
+            ) AS product_active,
             COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0) AS cotizacion
      FROM ml_listings l
      JOIN ml_combos c ON c.id = l.ml_combo_id
@@ -522,7 +529,7 @@ export async function getSummary(sellerId) {
 
   const { rows: salesRows } = await pool.query(
     `SELECT
-       COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)::int AS sales_today,
+       COUNT(*) FILTER (WHERE (created_at AT TIME ZONE '${ART}')::date = (now() AT TIME ZONE '${ART}')::date)::int AS sales_today,
        MAX(created_at) AS last_sale_at
      FROM web_orders WHERE seller_id = $1 AND channel = 'mercadolibre'`,
     [sellerId]
