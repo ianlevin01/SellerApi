@@ -20,7 +20,19 @@ export async function getConfig(req, res) {
 
 export async function getOrders(req, res) {
   try {
-    return res.json(await storeService.getOrders(req.seller.id));
+    const { limit, offset, status, search } = req.query;
+    return res.json(await storeService.getOrders(req.seller.id, {
+      limit:  limit  ? Number(limit)  : 30,
+      offset: offset ? Number(offset) : 0,
+      status: status || null,
+      search: search || null,
+    }));
+  } catch (err) { handleError(res, err); }
+}
+
+export async function getOrderStats(req, res) {
+  try {
+    return res.json(await storeService.getOrderStats(req.seller.id));
   } catch (err) { handleError(res, err); }
 }
 

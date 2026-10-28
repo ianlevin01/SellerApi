@@ -142,17 +142,44 @@ export async function getConfig(sellerId) {
 
 // ── Pedidos ───────────────────────────────────────────────────
 
-export async function getOrders(sellerId) {
+// Arma el WHERE compartido por getOrders/getOrdersCount — status filtra por el color real tal
+// cual lo ve el vendedor (COALESCE a 'pending', mismo default que usa el resto del código),
+// search busca por número de pedido o nombre del cliente. startParamIndex es 2 por default
+// porque $1 ya lo usa seller_id acá arriba.
+function buildOrdersWhere(sellerId, { status, search } = {}, startParamIndex = 2) {
+  const conditions = ["wo.seller_id = $1"];
+  const params = [sellerId];
+  let i = startParamIndex;
+
+  if (status && status !== "all") {
+    conditions.push(`COALESCE(wo.color, 'pending') = $${i}`);
+    params.push(status);
+    i++;
+  }
+  if (search && search.trim()) {
+    conditions.push(`(wo.numero::text ILIKE $${i} OR wo.customer_name ILIKE $${i})`);
+    params.push(`%${search.trim()}%`);
+    i++;
+  }
+  return { where: conditions.join(" AND "), params };
+}
+
+// Paginado — 30 por carga por defecto (scroll infinito en el frontend). status/search filtran
+// en la base, no en el frontend, para que la búsqueda encuentre un pedido aunque no esté entre
+// los ya cargados en pantalla.
+export async function getOrders(sellerId, { limit = 30, offset = 0, status, search } = {}) {
+  const { where, params } = buildOrdersWhere(sellerId, { status, search });
   const { rows } = await pool.query(
     `SELECT
        wo.id, wo.numero, wo.customer_name, wo.customer_email,
        wo.customer_city, wo.total,
        COALESCE(wo.shipping_amount, 0) AS shipping_amount,
        COALESCE(wo.free_shipping_absorbed, 0) AS free_shipping_absorbed,
+       wo.ml_shipping_cost, wo.ml_order_id, wo.ml_logistic_type,
        wo.color, wo.created_at, wo.order_id, wo.channel,
-       wo.ml_shipping_cost,
        COALESCE(
          (SELECT json_agg(json_build_object(
+           'id',                  woi.id,
            'name',                woi.name,
            'quantity',            woi.quantity,
            'unit_price',          woi.unit_price,
@@ -160,7 +187,8 @@ export async function getOrders(sellerId) {
            'product_id',          woi.product_id,
            'selected_color_name', woi.selected_color_name,
            'selected_color_hex',  woi.selected_color_hex,
-           'ml_sale_fee',         woi.ml_sale_fee
+           'ml_sale_fee',         woi.ml_sale_fee,
+           'ml_item_id',          woi.ml_item_id
          )) FROM web_order_items woi WHERE woi.web_order_id = wo.id),
          '[]'
        ) AS items,
@@ -168,11 +196,29 @@ export async function getOrders(sellerId) {
         FROM order_shipping os WHERE os.web_order_id = wo.id LIMIT 1
        ) AS shipping
      FROM web_orders wo
-     WHERE wo.seller_id = $1
-     ORDER BY wo.created_at DESC`,
-    [sellerId]
+     WHERE ${where}
+     ORDER BY wo.created_at DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset]
   );
   return rows;
+}
+
+export async function getOrdersCount(sellerId, { status, search } = {}) {
+  const { where, params } = buildOrdersWhere(sellerId, { status, search });
+  const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM web_orders wo WHERE ${where}`, params);
+  return rows[0].c;
+}
+
+// Costo en USD de varios productos de una — para calcular ganancia de un lote de pedidos sin un
+// round-trip a la base por ítem (ver storeService.getCostUsdByProduct).
+export async function getCostUsdForProducts(productIds) {
+  if (productIds.length === 0) return new Map();
+  const { rows } = await pool.query(
+    `SELECT id, costo_usd FROM products WHERE id = ANY($1::uuid[])`,
+    [productIds]
+  );
+  return new Map(rows.map(r => [r.id, Number(r.costo_usd || 0)]));
 }
 
 export async function getCostUsdForProduct(productId) {
@@ -181,6 +227,17 @@ export async function getCostUsdForProduct(productId) {
     [productId]
   );
   return Number(rows[0]?.costo_usd || 0);
+}
+
+// Completa ml_shipping_cost/ml_sale_fee cuando el webhook los guardó en null porque Mercado
+// Libre todavía no los tenía calculados en el momento exacto en que llegó la notificación —
+// ver storeService.backfillMissingMlFinancials.
+export async function updateOrderShippingCost(orderId, shippingCost) {
+  await pool.query(`UPDATE web_orders SET ml_shipping_cost = $1 WHERE id = $2`, [shippingCost, orderId]);
+}
+
+export async function updateOrderItemSaleFee(itemId, saleFee) {
+  await pool.query(`UPDATE web_order_items SET ml_sale_fee = $1 WHERE id = $2`, [saleFee, itemId]);
 }
 
 // ── Tienda pública ────────────────────────────────────────────

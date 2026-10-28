@@ -42,6 +42,7 @@ router.delete("/pages/:pageId/reviews/:reviewId",                    requireSell
 // ── Legado: apunta a la primera página del vendedor ───────────
 router.get ("/config",                         requireSeller, storeController.getConfig);
 router.get ("/orders",                         requireSeller, storeController.getOrders);
+router.get ("/orders/stats",                   requireSeller, storeController.getOrderStats);
 router.get ("/my-tier",                        requireSeller, storeController.getMyTierInfo);
 
 // ── Analytics ─────────────────────────────────────────────────
