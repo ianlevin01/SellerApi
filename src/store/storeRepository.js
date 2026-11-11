@@ -1,5 +1,6 @@
 // src/modules/store/storeRepository.j
 import pool from "../database/db.js"
+import { stockCounts } from "../config/stockConfig.js";
 import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
 
 const NEGOCIOS_SQL = `ARRAY[${NEGOCIOS_ACTIVOS.map(id => `'${id}'`).join(",")}]::uuid[]`;
@@ -292,8 +293,8 @@ export async function getPublicProducts(pageId, sellerId) {
            * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
            * 1.56
          ) > 100000
-         THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) > 0
-         ELSE (COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) >= 10
+         THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id AND ${stockCounts("sq")}), 0) > 0
+         ELSE (COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id AND ${stockCounts("sq")}), 0) - COALESCE(p.stock_reserva, 0)) >= 10
        END
      ORDER BY p.name`,
     [pageId, sellerId]

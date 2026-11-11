@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { stockCounts } from "../config/stockConfig.js";
 import pool from "../database/db.js";
 import { calcShownCost, getSellerPlatformPct } from "../utils/pricing.js";
 import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
@@ -245,7 +246,7 @@ async function toolGetMyStoreProducts(ctx, { search } = {}) {
       p.id, p.code, p.name, p.costo_usd,
       c.name AS category,
       GREATEST(0, COALESCE(
-        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       sp.custom_price,
       sp.promo_price,
@@ -306,7 +307,7 @@ async function toolGetCatalogProducts(ctx, { search, category, only_available } 
       p.id, p.code, p.name, p.costo_usd,
       c.name AS category,
       GREATEST(0, COALESCE(
-        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       EXISTS (
         SELECT 1 FROM seller_products sp2

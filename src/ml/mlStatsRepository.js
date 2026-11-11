@@ -2,6 +2,7 @@
 // Estadísticas de Mercado Libre — todo se calcula con datos que ya guardamos en
 // web_orders/web_order_items, sin pegarle a la API de ML en cada carga de la pantalla.
 import pool from "../database/db.js";
+import { stockCounts } from "../config/stockConfig.js";
 
 const ART = "America/Argentina/Buenos_Aires";
 // Estados que representan una venta real y confirmada (después de pagada) — "pending" todavía
@@ -112,7 +113,7 @@ export async function getProductBreakdown(sellerId, from, to) {
        l.status AS listing_status,
        (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
        GREATEST(0, COALESCE(
-         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+         (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
        ) - COALESCE(p.stock_reserva, 0)) AS current_stock
      FROM web_order_items woi
      JOIN web_orders wo ON wo.id = woi.web_order_id

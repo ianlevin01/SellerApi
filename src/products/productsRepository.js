@@ -1,5 +1,6 @@
 // src/modules/products/productsRepository.js
 import pool from "../database/db.js"
+import { stockCounts } from "../config/stockConfig.js";
 import { NEGOCIOS_ACTIVOS } from "../config/negociosConfig.js";
 
 // SQL fragment: "p.negocio_id = ANY(ARRAY['uuid1','uuid2']::uuid[])"
@@ -12,10 +13,10 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
       p.category_id, c.name AS category_name,
       p.costo_usd, p.created_at, p.admin_info,
       COALESCE(
-        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
       ) AS stock_total,
       GREATEST(0, COALESCE(
-        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       (SELECT sp.id FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS seller_product_id,
@@ -53,7 +54,7 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
          WHERE ssr.seller_id = $2 AND ssr.product_id = p.id LIMIT 1), 0
       ) AS seller_own_stock,
       GREATEST(0,
-        GREATEST(0, COALESCE((SELECT SUM(s2.quantity) FROM stock s2 WHERE s2.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0))
+        GREATEST(0, COALESCE((SELECT SUM(s2.quantity) FROM stock s2 WHERE s2.product_id = p.id AND ${stockCounts("s2")}), 0) - COALESCE(p.stock_reserva, 0))
         - COALESCE((SELECT SUM(ssr2.quantity) FROM seller_stock_reserves ssr2 WHERE ssr2.product_id = p.id), 0)
       ) AS available_for_reserve,
       CASE
@@ -62,8 +63,8 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
           * COALESCE((SELECT cfg.cotizacion_dolar FROM price_config cfg WHERE cfg.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
           * 1.56
         ) > 100000
-        THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) <= 0
-        ELSE GREATEST(0, COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) < 10
+        THEN COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id AND ${stockCounts("sq")}), 0) <= 0
+        ELSE GREATEST(0, COALESCE((SELECT SUM(sq.quantity) FROM stock sq WHERE sq.product_id = p.id AND ${stockCounts("sq")}), 0) - COALESCE(p.stock_reserva, 0)) < 10
       END AS is_low_stock
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
@@ -105,17 +106,32 @@ export async function findAll({ pageId, sellerId, search, categoryId, onlyMine, 
           * COALESCE((SELECT cfg2.cotizacion_dolar FROM price_config cfg2 WHERE cfg2.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
           * 1.56
         ) > 100000
-        THEN COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id), 0) <= 0
-        ELSE GREATEST(0, COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) < 10
+        THEN COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id AND ${stockCounts("sq2")}), 0) <= 0
+        ELSE GREATEST(0, COALESCE((SELECT SUM(sq2.quantity) FROM stock sq2 WHERE sq2.product_id = p.id AND ${stockCounts("sq2")}), 0) - COALESCE(p.stock_reserva, 0)) < 10
       END
     )`;
   }
   if (minStock != null) {
     // Repite la misma expresión de available_stock del SELECT — no se puede referenciar
     // el alias directamente en el WHERE de la misma query.
-    query += ` AND GREATEST(0, COALESCE((SELECT SUM(s3.quantity) FROM stock s3 WHERE s3.product_id = p.id), 0) - COALESCE(p.stock_reserva, 0)) > $${idx}`;
+    query += ` AND GREATEST(0, COALESCE((SELECT SUM(s3.quantity) FROM stock s3 WHERE s3.product_id = p.id AND ${stockCounts("s3")}), 0) - COALESCE(p.stock_reserva, 0)) > $${idx}`;
     params.push(minStock);
     idx++;
+    // Además del piso numérico: nada que mlStockSync (job de 15 min) pausaría apenas se publique.
+    // Mismo criterio que is_low_stock y que el filtro de la tienda pública (< 10 unidades, o sin
+    // stock si es "caro") — si no, el catálogo ofrecía publicar productos con 2-9 unidades que el
+    // job pausaba en el ciclo siguiente.
+    query += ` AND NOT (
+      CASE
+        WHEN (
+          COALESCE(p.costo_usd, 0)
+          * COALESCE((SELECT cfg3.cotizacion_dolar FROM price_config cfg3 WHERE cfg3.negocio_id = '00000000-0000-0000-0000-000000000001' LIMIT 1), 0)
+          * 1.56
+        ) > 100000
+        THEN COALESCE((SELECT SUM(sq3.quantity) FROM stock sq3 WHERE sq3.product_id = p.id AND ${stockCounts("sq3")}), 0) <= 0
+        ELSE GREATEST(0, COALESCE((SELECT SUM(sq3.quantity) FROM stock sq3 WHERE sq3.product_id = p.id AND ${stockCounts("sq3")}), 0) - COALESCE(p.stock_reserva, 0)) < 10
+      END
+    )`;
   }
   if (topSellingIds) {
     // Array vacío (nadie vendió nada en la ventana) filtra correctamente todo — ANY sobre un
@@ -169,7 +185,7 @@ export async function findById(pageId, sellerId, productId) {
       p.category_id, c.name AS category_name,
       p.costo_usd, p.admin_info,
       GREATEST(0, COALESCE(
-        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0
+        (SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0
       ) - COALESCE(p.stock_reserva, 0)) AS available_stock,
       (SELECT sp.id FROM seller_products sp
        WHERE ($1::uuid IS NULL OR sp.page_id = $1) AND sp.seller_id = $2 AND sp.product_id = p.id AND sp.active = true LIMIT 1) AS seller_product_id,
@@ -239,7 +255,7 @@ export async function getProductForCheckout(productId) {
   const { rows } = await pool.query(
     `SELECT p.id, p.name, p.costo_usd,
             GREATEST(0,
-              COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+              COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0)
               - COALESCE(p.stock_reserva, 0)
               - COALESCE((SELECT SUM(ssr.quantity) FROM seller_stock_reserves ssr WHERE ssr.product_id = p.id), 0)
             ) AS available_for_reserve

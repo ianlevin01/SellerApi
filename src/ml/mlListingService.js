@@ -1,4 +1,5 @@
 import pool from "../database/db.js";
+import { stockCounts } from "../config/stockConfig.js";
 import * as repo from "./mlRepository.js";
 import { getValidToken } from "./mlTokenService.js";
 import * as svc from "./mlService.js";
@@ -68,7 +69,7 @@ export async function searchProductsForCalculator(sellerId, search) {
 async function getProductForListing(productId) {
   const { rows } = await pool.query(
     `SELECT p.id, p.name, p.description, p.costo_usd, p.weight_grams, p.volume_cm3,
-            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0)
               - COALESCE(p.stock_reserva, 0)) AS available_stock
      FROM products p WHERE p.id = $1 AND p.active = true`,
     [productId]

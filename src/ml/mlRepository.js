@@ -1,4 +1,5 @@
 import pool from "../database/db.js";
+import { stockCounts } from "../config/stockConfig.js";
 
 const ART = "America/Argentina/Buenos_Aires";
 
@@ -171,7 +172,7 @@ export async function searchProductsForLinking(search) {
 export async function getComboProducts(comboId) {
   const { rows } = await pool.query(
     `SELECT cp.product_id, cp.quantity, p.name, p.description, p.costo_usd, p.weight_grams, p.volume_cm3,
-            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0)
               - COALESCE(p.stock_reserva, 0)) AS available_stock
      FROM ml_combo_products cp
      JOIN products p ON p.id = cp.product_id
@@ -330,7 +331,7 @@ export async function getActiveListingsWithStock() {
             COALESCE((SELECT ssr.quantity FROM seller_stock_reserves ssr
                       WHERE ssr.seller_id = l.seller_id AND ssr.product_id = l.product_id), 0) AS seller_own_reserve,
             GREATEST(0,
-              GREATEST(0, COALESCE((SELECT SUM(s2.quantity) FROM stock s2 WHERE s2.product_id = l.product_id), 0)
+              GREATEST(0, COALESCE((SELECT SUM(s2.quantity) FROM stock s2 WHERE s2.product_id = l.product_id AND ${stockCounts("s2")}), 0)
                 - COALESCE(p.stock_reserva, 0))
               - COALESCE((SELECT SUM(ssr2.quantity) FROM seller_stock_reserves ssr2 WHERE ssr2.product_id = l.product_id), 0)
             ) AS shared_available,
@@ -417,7 +418,7 @@ export async function getListingsBySeller(sellerId) {
   const { rows } = await pool.query(
     `SELECT l.*, p.name AS product_name, p.code AS sku, p.costo_usd,
             (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
-            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0)
               - COALESCE(p.stock_reserva, 0)) AS available_stock,
             -- Por ml_item_id, NO por product_id: si el mismo producto tiene más de una
             -- publicación, filtrar por product_id sumaba las ventas de TODAS esas publicaciones
@@ -476,7 +477,7 @@ async function getComboDisplayDetails(comboIds) {
   const { rows } = await pool.query(
     `SELECT cp.ml_combo_id, cp.product_id, cp.quantity, p.name, p.costo_usd,
             (SELECT key FROM product_images WHERE product_id = p.id ORDER BY created_at LIMIT 1) AS image_key,
-            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)
+            GREATEST(0, COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND ${stockCounts("s")}), 0)
               - COALESCE(p.stock_reserva, 0)) AS product_available_stock,
             COALESCE((
               SELECT SUM(woi.quantity) FROM web_order_items woi
