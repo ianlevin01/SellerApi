@@ -42,7 +42,7 @@ async function chargeOrdersNow(sellerId, orders, description) {
   });
 
   if (!result.ok) {
-    const e = new Error("No se pudo cobrar la tarjeta. Probá con otra o revisá el saldo.");
+    const e = new Error(cardSvc.translateChargeFailure(result.reason));
     e.status = 402;
     throw e;
   }
@@ -102,8 +102,13 @@ export async function topup(sellerId, amount) {
     externalReference: `topup-${sellerId}-${Date.now()}`,
   });
 
+  await repo.insertChargeAttempt(sellerId, {
+    kind: "topup", amount, success: result.approved,
+    method: "card", reason: result.reason, mpPaymentId: result.mpPaymentId,
+  });
+
   if (!result.approved) {
-    const err = new Error("No se pudo cobrar la tarjeta. Probá con otra o revisá el saldo.");
+    const err = new Error(cardSvc.translateChargeFailure(result.reason));
     err.status = 402;
     throw err;
   }
@@ -145,7 +150,7 @@ export async function debitOrCharge(sellerId, amount, { mlOrderId, description }
   });
 
   if (!result.approved) {
-    return { ok: false, method: "card", reason: result.status || "rejected" };
+    return { ok: false, method: "card", reason: result.reason || result.status || "rejected" };
   }
 
   await repo.insertTransaction(sellerId, {
