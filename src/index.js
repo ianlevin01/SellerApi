@@ -29,6 +29,7 @@ import { startShippingTracker }     from "./jobs/shippingTracker.js";
 import { startAbandonedCartTracker } from "./jobs/abandonedCartTracker.js";
 import { startMlDailyChargeJob }     from "./ml/mlDailyChargeJob.js";
 import { startMlStockSync }          from "./jobs/mlStockSync.js";
+import { startYolodercyeDispatchSummary } from "./jobs/yolodercyeDispatchSummary.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -112,6 +113,7 @@ startShippingTracker();
 startAbandonedCartTracker();
 startMlDailyChargeJob();
 startMlStockSync();
+startYolodercyeDispatchSummary(); // resumen diario de despacho, solo para yolodercye@gmail.com (09:00 ART)
 
 // Evita que la API crashee por promesas rechazadas sin capturar
 process.on("unhandledRejection", (reason) => {
