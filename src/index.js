@@ -113,7 +113,7 @@ startShippingTracker();
 startAbandonedCartTracker();
 startMlDailyChargeJob();
 startMlStockSync();
-startYolodercyeDispatchSummary(); // resumen diario de despacho, solo para yolodercye@gmail.com (09:00 ART)
+startYolodercyeDispatchSummary(); // resumen diario de despacho, solo para yolodercye@gmail.com (09:00 y 16:30 ART)
 
 // Evita que la API crashee por promesas rechazadas sin capturar
 process.on("unhandledRejection", (reason) => {
